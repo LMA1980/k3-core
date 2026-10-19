@@ -1,0 +1,11 @@
+[package]
+name = "k3-core"
+description = "Core traits, zero-copy tensor views, and diagnostics for the SpacemiT K3 AI platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/LMA1980/k3-core"
+
+[lints]
+workspace = true
