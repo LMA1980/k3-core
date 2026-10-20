@@ -110,12 +110,13 @@ impl<'a> ExecutionContext<'a> {
     /// # Errors
     /// Returns [`K3Error::ContextLengthExceeded`] if `self.position + token_count > self.n_ctx`.
     pub fn advance_position(&mut self, token_count: usize) -> Result<usize, K3Error> {
-        let new_pos = self.position.checked_add(token_count).ok_or(
-            K3Error::ContextLengthExceeded {
-                requested_tokens: usize::MAX,
-                max_context_tokens: self.n_ctx,
-            },
-        )?;
+        let new_pos =
+            self.position
+                .checked_add(token_count)
+                .ok_or(K3Error::ContextLengthExceeded {
+                    requested_tokens: usize::MAX,
+                    max_context_tokens: self.n_ctx,
+                })?;
         if new_pos > self.n_ctx {
             return Err(K3Error::ContextLengthExceeded {
                 requested_tokens: new_pos,

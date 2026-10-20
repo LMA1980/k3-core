@@ -87,10 +87,12 @@ mod tests {
             ctx: &mut ExecutionContext<'_>,
             _weights: &dyn ModelWeights,
         ) -> Result<(), K3Error> {
-            let token = ctx.decode_token().ok_or_else(|| K3Error::CapabilityMismatch {
-                architecture: self.architecture_id().to_owned(),
-                reason: "decode_step called without a staged decode token".to_owned(),
-            })?;
+            let token = ctx
+                .decode_token()
+                .ok_or_else(|| K3Error::CapabilityMismatch {
+                    architecture: self.architecture_id().to_owned(),
+                    reason: "decode_step called without a staged decode token".to_owned(),
+                })?;
             ctx.advance_position(1)?;
             if let Some(slot) = ctx.logits_mut().get_mut(token as usize) {
                 *slot = 2.0;
@@ -128,9 +130,14 @@ mod tests {
         let backing = vec![0xAB_u8; 352];
 
         // Valid Q4_K_M tensor: 256 * 2 = 512 elements -> 2 blocks * 144 = 288 bytes at offset 0
-        let view_q4 =
-            TensorView::from_bytes("blk.0.attn_q.weight", QuantType::Q4_K_M, &[256, 2], 0, &backing)
-                .expect("valid Q4_K_M bounds");
+        let view_q4 = TensorView::from_bytes(
+            "blk.0.attn_q.weight",
+            QuantType::Q4_K_M,
+            &[256, 2],
+            0,
+            &backing,
+        )
+        .expect("valid Q4_K_M bounds");
         assert_eq!(view_q4.name(), "blk.0.attn_q.weight");
         assert_eq!(view_q4.quant(), QuantType::Q4_K_M);
         assert_eq!(view_q4.shape(), &[256, 2]);
@@ -162,7 +169,10 @@ mod tests {
 
         // Empty shape rejected
         let empty_shape = TensorView::from_bytes("empty", QuantType::F32, &[], 0, &backing);
-        assert!(matches!(empty_shape, Err(K3Error::TensorBoundsError { .. })));
+        assert!(matches!(
+            empty_shape,
+            Err(K3Error::TensorBoundsError { .. })
+        ));
 
         // Zero dimension rejected
         let zero_dim = TensorView::from_bytes("zero", QuantType::F32, &[256, 0], 0, &backing);

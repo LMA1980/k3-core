@@ -205,15 +205,16 @@ impl<'a> TensorView<'a> {
                 other => other,
             })?;
 
-        let end_offset = offset
-            .checked_add(byte_len)
-            .ok_or_else(|| K3Error::TensorBoundsError {
-                tensor_name: name.to_owned(),
-                offset,
-                byte_len,
-                buffer_len,
-                reason: "tensor offset + byte_len overflowed usize".to_owned(),
-            })?;
+        let end_offset =
+            offset
+                .checked_add(byte_len)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: name.to_owned(),
+                    offset,
+                    byte_len,
+                    buffer_len,
+                    reason: "tensor offset + byte_len overflowed usize".to_owned(),
+                })?;
 
         if end_offset > buffer_len {
             return Err(K3Error::TensorBoundsError {
