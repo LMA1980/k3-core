@@ -1,5 +1,5 @@
-use std::time::Instant;
 use k3_core::{QuantType, TensorView};
+use std::time::Instant;
 
 fn main() {
     let backing = vec![0xAB_u8; 1024 * 1024];
@@ -18,9 +18,6 @@ fn main() {
         std::hint::black_box(view);
     }
     let elapsed = start.elapsed();
-    let ns_per_iter = elapsed.as_nanos() as f64 / iters as f64;
-    println!(
-        "test tensor_view_from_bytes ... bench: {:>10.1} ns/iter (+/- 2.0)",
-        ns_per_iter
-    );
+    let ns_per_iter = (elapsed.as_secs_f64() * 1_000_000_000.0) / f64::from(iters);
+    println!("test tensor_view_from_bytes ... bench: {ns_per_iter:>10.1} ns/iter (+/- 2.0)");
 }
