@@ -9,3 +9,7 @@ repository = "https://github.com/LMA1980/k3-core"
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "tensor_bench"
+harness = false
