@@ -132,7 +132,7 @@ impl<'a> ExecutionContext<'a> {
 ///
 /// Each recipe maps a specific `general.architecture` identifier (treating minor versions
 /// such as `qwen3` vs. `qwen3.8` as distinct algorithms) to single-prompt prefill and decode steps.
-pub trait ArchRecipe: Send + Sync {
+pub trait ArchRecipe: Send + Sync + core::fmt::Debug {
     /// Returns the exact GGUF `general.architecture` identifier handled by this recipe.
     fn architecture_id(&self) -> &'static str;
 

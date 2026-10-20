@@ -2,10 +2,17 @@
 //! and structured diagnostic errors for the `SpacemiT` K3 AI runtime.
 
 pub mod error;
+pub mod gguf;
 pub mod recipe;
 pub mod tensor;
 
 pub use error::K3Error;
+#[doc(hidden)]
+pub use gguf::test_helpers;
+pub use gguf::{
+    DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION_V3, GgufArray, GgufFile, GgufMetadataValueType,
+    GgufValue, ModelMetadata, TensorDescriptor, align_up,
+};
 pub use recipe::{ArchRecipe, ExecutionContext};
 pub use tensor::{ModelWeights, QuantType, TensorView};
 
@@ -53,6 +60,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     struct DummyRecipe;
 
     impl ArchRecipe for DummyRecipe {
