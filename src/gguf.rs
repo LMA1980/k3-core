@@ -155,6 +155,21 @@ impl<'a> GgufValue<'a> {
             _ => None,
         }
     }
+
+    /// Returns the value as `u32` if convertible.
+    #[must_use]
+    pub fn as_u32(&self) -> Option<u32> {
+        self.as_u64().and_then(|v| u32::try_from(v).ok())
+    }
+
+    /// Returns the inner [`GgufArray`] if this value is [`GgufValue::Array`].
+    #[must_use]
+    pub const fn as_array(&self) -> Option<&GgufArray<'a>> {
+        match self {
+            Self::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
 }
 
 /// Homogeneous array parsed from a GGUF metadata value.
@@ -714,6 +729,7 @@ struct ParsedTensors {
 pub struct GgufFile<'a> {
     buffer: &'a [u8],
     metadata: ModelMetadata,
+    metadata_map: BTreeMap<&'a str, GgufValue<'a>>,
     tensor_index: BTreeMap<String, usize>,
 }
 
@@ -848,6 +864,7 @@ impl<'a> GgufFile<'a> {
         Ok(Self {
             buffer,
             metadata,
+            metadata_map,
             tensor_index: parsed_tensors.tensor_index,
         })
     }
@@ -1038,6 +1055,18 @@ impl<'a> GgufFile<'a> {
         &self.metadata
     }
 
+    /// Returns a parsed GGUF metadata value by key, if present.
+    #[must_use]
+    pub fn metadata_value(&self, key: &str) -> Option<&GgufValue<'a>> {
+        self.metadata_map.get(key)
+    }
+
+    /// Returns the full map of parsed GGUF metadata key-value entries.
+    #[must_use]
+    pub const fn metadata_entries(&self) -> &BTreeMap<&'a str, GgufValue<'a>> {
+        &self.metadata_map
+    }
+
     /// Returns the model architecture string identifier.
     #[must_use]
     pub fn architecture(&self) -> &str {
@@ -1104,15 +1133,30 @@ impl fmt::Display for ModelMetadata {
 #[doc(hidden)]
 pub mod test_helpers {
     use super::{
-        GGUF_MAGIC, GGUF_VERSION_V3, GgufMetadataValueType, GgufValue, QuantType, align_up,
+        GGUF_MAGIC, GGUF_VERSION_V3, GgufArray, GgufMetadataValueType, GgufValue, QuantType,
+        align_up,
     };
 
-    /// Test helper that constructs a synthetic valid GGUF v3 byte buffer.
+    /// Test helper that constructs a synthetic valid GGUF v3 byte buffer with default
+    /// hyperparameters and embedded vocabulary/chat-template metadata.
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn create_synthetic_gguf_v3(
         architecture: &str,
         alignment: usize,
+        tensor_specs: &[(&str, QuantType, &[usize])],
+    ) -> Vec<u8> {
+        create_synthetic_gguf_v3_with_kvs(architecture, alignment, &[], tensor_specs)
+    }
+
+    /// Test helper that constructs a synthetic valid GGUF v3 byte buffer with custom
+    /// additional or overriding metadata key-value pairs.
+    #[must_use]
+    #[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
+    pub fn create_synthetic_gguf_v3_with_kvs(
+        architecture: &str,
+        alignment: usize,
+        extra_kvs: &[(&str, GgufValue<'_>)],
         tensor_specs: &[(&str, QuantType, &[usize])],
     ) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -1129,14 +1173,71 @@ pub mod test_helpers {
         let k_ctx = format!("{architecture}.context_length");
         let alignment_u32 = u32::try_from(alignment).expect("alignment fits u32");
 
-        let kv_pairs: Vec<(&str, GgufValue<'_>)> = vec![
+        let default_tokens = vec![
+            "<pad>",
+            "<bos>",
+            "<eos>",
+            "<|im_start|>",
+            "<|im_end|>",
+            "user",
+            "assistant",
+            "\n",
+            " ",
+            "hello",
+            "world",
+            "Explain",
+            "RVV",
+            "1.0",
+            "SpacemiT",
+            "K3",
+        ];
+        let default_scores = vec![0.0_f32; default_tokens.len()];
+        let default_token_types = vec![3_i32, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let default_merges = vec!["h ello", "w orld"];
+
+        let mut kv_pairs: Vec<(&str, GgufValue<'_>)> = vec![
             ("general.architecture", GgufValue::String(architecture)),
             ("general.alignment", GgufValue::Uint32(alignment_u32)),
             (&k_block, GgufValue::Uint32(4)),
             (&k_emb, GgufValue::Uint32(256)),
             (&k_head, GgufValue::Uint32(4)),
             (&k_ctx, GgufValue::Uint32(2048)),
+            ("tokenizer.ggml.model", GgufValue::String("gpt2")),
+            (
+                "tokenizer.ggml.tokens",
+                GgufValue::Array(GgufArray::String(default_tokens)),
+            ),
+            (
+                "tokenizer.ggml.scores",
+                GgufValue::Array(GgufArray::Float32(default_scores)),
+            ),
+            (
+                "tokenizer.ggml.token_type",
+                GgufValue::Array(GgufArray::Int32(default_token_types)),
+            ),
+            (
+                "tokenizer.ggml.merges",
+                GgufValue::Array(GgufArray::String(default_merges)),
+            ),
+            ("tokenizer.ggml.bos_token_id", GgufValue::Uint32(1)),
+            ("tokenizer.ggml.eos_token_id", GgufValue::Uint32(2)),
+            ("tokenizer.ggml.padding_token_id", GgufValue::Uint32(0)),
+            ("tokenizer.ggml.add_bos_token", GgufValue::Bool(true)),
+            (
+                "tokenizer.chat_template",
+                GgufValue::String(
+                    "<|im_start|>user\n{{prompt}}<|im_end|>\n<|im_start|>assistant\n",
+                ),
+            ),
         ];
+
+        for &(extra_k, ref extra_v) in extra_kvs {
+            if let Some(pos) = kv_pairs.iter().position(|(k, _)| *k == extra_k) {
+                kv_pairs[pos] = (extra_k, extra_v.clone());
+            } else {
+                kv_pairs.push((extra_k, extra_v.clone()));
+            }
+        }
 
         buf.extend_from_slice(&tensor_count.to_le_bytes());
         let kv_len = u64::try_from(kv_pairs.len()).expect("kv count fits u64");
@@ -1145,17 +1246,7 @@ pub mod test_helpers {
         // 3. Write KV pairs
         for (k, v) in kv_pairs {
             write_string(&mut buf, k);
-            match v {
-                GgufValue::String(s) => {
-                    buf.extend_from_slice(&(GgufMetadataValueType::String as u32).to_le_bytes());
-                    write_string(&mut buf, s);
-                }
-                GgufValue::Uint32(u) => {
-                    buf.extend_from_slice(&(GgufMetadataValueType::Uint32 as u32).to_le_bytes());
-                    buf.extend_from_slice(&u.to_le_bytes());
-                }
-                _ => panic!("unhandled value type in test helper"),
-            }
+            write_gguf_value(&mut buf, &v);
         }
 
         // 4. Calculate relative tensor offsets and write tensor descriptors
@@ -1188,7 +1279,15 @@ pub mod test_helpers {
             let rel_offset_u64 = u64::try_from(rel_offset).expect("rel_offset fits u64");
             buf.extend_from_slice(&rel_offset_u64.to_le_bytes());
 
-            tensor_data_chunks.push(vec![0xAA_u8; byte_len]);
+            // Populate deterministic non-zero bytes so dequantization / dot-products are non-trivial
+            let mut chunk = vec![0u8; byte_len];
+            for (idx, b) in chunk.iter_mut().enumerate() {
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    *b = ((idx * 31 + 17) & 0x7F) as u8;
+                }
+            }
+            tensor_data_chunks.push(chunk);
             rel_offset += byte_len;
         }
 
@@ -1203,6 +1302,164 @@ pub mod test_helpers {
         }
 
         buf
+    }
+
+    /// Serializes a [`GgufValue`] into `buf` in GGUF v3 binary format.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn write_gguf_value(buf: &mut Vec<u8>, val: &GgufValue<'_>) {
+        match val {
+            GgufValue::Uint8(v) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint8 as u32).to_le_bytes());
+                buf.push(*v);
+            }
+            GgufValue::Int8(v) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int8 as u32).to_le_bytes());
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            GgufValue::Uint16(v) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint16 as u32).to_le_bytes());
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            GgufValue::Int16(v) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int16 as u32).to_le_bytes());
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            GgufValue::Uint32(u) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint32 as u32).to_le_bytes());
+                buf.extend_from_slice(&u.to_le_bytes());
+            }
+            GgufValue::Int32(i) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int32 as u32).to_le_bytes());
+                buf.extend_from_slice(&i.to_le_bytes());
+            }
+            GgufValue::Float32(f) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Float32 as u32).to_le_bytes());
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
+            GgufValue::Bool(b) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Bool as u32).to_le_bytes());
+                buf.push(u8::from(*b));
+            }
+            GgufValue::String(s) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::String as u32).to_le_bytes());
+                write_string(buf, s);
+            }
+            GgufValue::Uint64(u) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint64 as u32).to_le_bytes());
+                buf.extend_from_slice(&u.to_le_bytes());
+            }
+            GgufValue::Int64(i) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int64 as u32).to_le_bytes());
+                buf.extend_from_slice(&i.to_le_bytes());
+            }
+            GgufValue::Float64(f) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Float64 as u32).to_le_bytes());
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
+            GgufValue::Array(arr) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Array as u32).to_le_bytes());
+                write_gguf_array(buf, arr);
+            }
+        }
+    }
+
+    fn write_gguf_array(buf: &mut Vec<u8>, arr: &GgufArray<'_>) {
+        match arr {
+            GgufArray::String(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::String as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for s in items {
+                    write_string(buf, s);
+                }
+            }
+            GgufArray::Float32(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Float32 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for f in items {
+                    buf.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+            GgufArray::Int32(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int32 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for i in items {
+                    buf.extend_from_slice(&i.to_le_bytes());
+                }
+            }
+            GgufArray::Uint32(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint32 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for u in items {
+                    buf.extend_from_slice(&u.to_le_bytes());
+                }
+            }
+            GgufArray::Uint8(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint8 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.extend_from_slice(items);
+            }
+            GgufArray::Int8(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int8 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for i in items {
+                    buf.extend_from_slice(&i.to_le_bytes());
+                }
+            }
+            GgufArray::Uint16(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint16 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for u in items {
+                    buf.extend_from_slice(&u.to_le_bytes());
+                }
+            }
+            GgufArray::Int16(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int16 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for i in items {
+                    buf.extend_from_slice(&i.to_le_bytes());
+                }
+            }
+            GgufArray::Bool(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Bool as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for b in items {
+                    buf.push(u8::from(*b));
+                }
+            }
+            GgufArray::Uint64(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Uint64 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for u in items {
+                    buf.extend_from_slice(&u.to_le_bytes());
+                }
+            }
+            GgufArray::Int64(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Int64 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for i in items {
+                    buf.extend_from_slice(&i.to_le_bytes());
+                }
+            }
+            GgufArray::Float64(items) => {
+                buf.extend_from_slice(&(GgufMetadataValueType::Float64 as u32).to_le_bytes());
+                let len = u64::try_from(items.len()).expect("len fits u64");
+                buf.extend_from_slice(&len.to_le_bytes());
+                for f in items {
+                    buf.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+        }
     }
 
     fn write_string(buf: &mut Vec<u8>, s: &str) {
