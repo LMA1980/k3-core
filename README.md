@@ -1,5 +1,20 @@
 # k3-core
 
+<p align="center">
+  <a href="https://hook.lma1980.duckdns.org/jobs">
+    <img src="https://hook.lma1980.duckdns.org/cards/LMA1980/k3-core/card.svg" alt="k3-core Factory Scorecard" width="520"/>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/status.svg" alt="CI Status"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/score.svg" alt="Quality Score"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/coverage.svg" alt="Coverage"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/benchmark.svg" alt="Benchmark"/></a>
+</p>
+
+---
+
 Core traits, zero-copy tensor views, single-prompt execution context, and structured diagnostics for the SpacemiT K3 AI platform.
 
 ## Overview
