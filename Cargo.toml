@@ -1,14 +1,22 @@
 [package]
 name = "k3-core"
 description = "Core traits, zero-copy tensor views, and diagnostics for the SpacemiT K3 AI platform"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
 repository = "https://github.com/LMA1980/k3-core"
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
 
 [[bench]]
 name = "tensor_bench"
