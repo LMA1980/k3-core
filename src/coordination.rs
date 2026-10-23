@@ -6,7 +6,9 @@ use core::str::FromStr;
 use crate::error::K3Error;
 
 /// Multi-core worker coordination profile for layer and operator synchronization barriers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum CoordinationProfile {
     /// Atomic busy-polling barrier with `core::hint::spin_loop()` (lowest latency, 100% CPU utilization).
@@ -83,10 +85,22 @@ mod tests {
         assert_eq!(CoordinationProfile::Futex.to_string(), "futex");
         assert_eq!(CoordinationProfile::Rayon.to_string(), "rayon");
 
-        assert_eq!("spin".parse::<CoordinationProfile>().unwrap(), CoordinationProfile::Spin);
-        assert_eq!("SPIN".parse::<CoordinationProfile>().unwrap(), CoordinationProfile::Spin);
-        assert_eq!(" futex ".parse::<CoordinationProfile>().unwrap(), CoordinationProfile::Futex);
-        assert_eq!("Rayon".parse::<CoordinationProfile>().unwrap(), CoordinationProfile::Rayon);
+        assert_eq!(
+            "spin".parse::<CoordinationProfile>().unwrap(),
+            CoordinationProfile::Spin
+        );
+        assert_eq!(
+            "SPIN".parse::<CoordinationProfile>().unwrap(),
+            CoordinationProfile::Spin
+        );
+        assert_eq!(
+            " futex ".parse::<CoordinationProfile>().unwrap(),
+            CoordinationProfile::Futex
+        );
+        assert_eq!(
+            "Rayon".parse::<CoordinationProfile>().unwrap(),
+            CoordinationProfile::Rayon
+        );
 
         let err = "invalid".parse::<CoordinationProfile>().unwrap_err();
         assert!(matches!(err, K3Error::CapabilityMismatch { .. }));
@@ -101,9 +115,18 @@ mod tests {
 
     #[test]
     fn test_coordination_profile_parse_method() {
-        assert_eq!(CoordinationProfile::parse("spin").unwrap(), CoordinationProfile::Spin);
-        assert_eq!(CoordinationProfile::parse("FUTEX").unwrap(), CoordinationProfile::Futex);
-        assert_eq!(CoordinationProfile::parse("rayon").unwrap(), CoordinationProfile::Rayon);
+        assert_eq!(
+            CoordinationProfile::parse("spin").unwrap(),
+            CoordinationProfile::Spin
+        );
+        assert_eq!(
+            CoordinationProfile::parse("FUTEX").unwrap(),
+            CoordinationProfile::Futex
+        );
+        assert_eq!(
+            CoordinationProfile::parse("rayon").unwrap(),
+            CoordinationProfile::Rayon
+        );
         assert!(CoordinationProfile::parse("unknown").is_err());
     }
 }
