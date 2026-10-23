@@ -1,11 +1,13 @@
 //! `k3-core`: Foundational traits, zero-copy tensor views, single-prompt execution context,
 //! and structured diagnostic errors for the `SpacemiT` K3 AI runtime.
 
+pub mod coordination;
 pub mod error;
 pub mod gguf;
 pub mod recipe;
 pub mod tensor;
 
+pub use coordination::CoordinationProfile;
 pub use error::K3Error;
 #[doc(hidden)]
 pub use gguf::test_helpers;
