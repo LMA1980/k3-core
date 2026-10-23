@@ -246,6 +246,23 @@ mod tests {
     }
 
     #[test]
+    fn test_quantization_detection_q8_0() {
+        let tensor_specs = [
+            ("blk.0.attn_q.weight", QuantType::Q8_0, &[32, 2][..]),
+            ("output_norm.weight", QuantType::F32, &[8][..]),
+        ];
+        let bytes = create_synthetic_gguf_v3("synthetic", 32, &tensor_specs);
+        let gguf = GgufFile::parse(&bytes).expect("parse synthetic GGUF");
+
+        let q_info = QuantizationInfo::from_descriptors(gguf.metadata().tensors());
+        assert_eq!(q_info.primary, "Q8_0");
+        assert_eq!(q_info.summary.get("Q8_0"), Some(&1));
+        assert_eq!(q_info.summary.get("F32"), Some(&1));
+        assert_eq!(q_info.tensor_bytes.get("Q8_0"), Some(&68));
+        assert_eq!(q_info.tensor_bytes.get("F32"), Some(&32));
+    }
+
+    #[test]
     fn test_cost_profile_serialization_roundtrip_and_invariants() {
         let profile = CostProfile {
             model_identity: ModelIdentity {
