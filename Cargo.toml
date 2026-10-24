@@ -9,6 +9,7 @@ repository = "https://github.com/LMA1980/k3-core"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
