@@ -7,18 +7,18 @@
     clippy::undocumented_unsafe_blocks
 )]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
+use k3_core::K3Error;
 use k3_core::ipc::layout::{
-    ArenaHeader, OutputSlabHeader, TokenInputSlotHeader, SLAB_STATUS_WRITTEN,
+    ArenaHeader, OutputSlabHeader, SLAB_STATUS_WRITTEN, TokenInputSlotHeader,
 };
 use k3_core::ipc::{
-    wrap_floats_as_float32_array, wrap_tokens_as_uint32_array, ArenaOptions, IpcError,
-    SharedMemoryArena, ShmTensorViews, DEFAULT_LIMIT_MEMLOCK_BYTES,
+    ArenaOptions, DEFAULT_LIMIT_MEMLOCK_BYTES, IpcError, SharedMemoryArena, ShmTensorViews,
+    wrap_floats_as_float32_array, wrap_tokens_as_uint32_array,
 };
-use k3_core::K3Error;
 use zerocopy::IntoBytes;
 
 #[test]
@@ -143,14 +143,8 @@ fn test_cross_mapping_mutation_coherence_immediately_visible() {
     assert!(!arena_tertiary.as_ptr().is_null());
 
     // 1. Initial state: all zeros
-    assert_eq!(
-        arena_secondary.slice(128, 8).expect("sec slice"),
-        &[0; 8]
-    );
-    assert_eq!(
-        arena_tertiary.slice(128, 8).expect("tert slice"),
-        &[0; 8]
-    );
+    assert_eq!(arena_secondary.slice(128, 8).expect("sec slice"), &[0; 8]);
+    assert_eq!(arena_tertiary.slice(128, 8).expect("tert slice"), &[0; 8]);
 
     // 2. Primary writes pattern to offset 128
     let pattern_a = [0x5A, 0xA5, 0x12, 0x34, 0xFE, 0xDC, 0xBA, 0x98];
@@ -174,7 +168,9 @@ fn test_cross_mapping_mutation_coherence_immediately_visible() {
     // 3. Secondary writes pattern to offset 4096 (second page boundary)
     let pattern_b = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
     {
-        let slice = arena_secondary.slice_mut(4096, 8).expect("slice_mut secondary");
+        let slice = arena_secondary
+            .slice_mut(4096, 8)
+            .expect("slice_mut secondary");
         slice.copy_from_slice(&pattern_b);
     }
 
@@ -193,8 +189,7 @@ fn test_cross_mapping_mutation_coherence_immediately_visible() {
 
 #[test]
 fn test_arrow_tensor_views_pointer_identity_and_live_mutation() {
-    let mut arena =
-        SharedMemoryArena::create("arrow_ptr_challenge", 16384).expect("create arena");
+    let mut arena = SharedMemoryArena::create("arrow_ptr_challenge", 16384).expect("create arena");
     let arena_ptr = arena.as_ptr();
 
     // 1. UInt32Array pointer bit-for-bit check
@@ -213,11 +208,7 @@ fn test_arrow_tensor_views_pointer_identity_and_live_mutation() {
     let arena_arc = Arc::new(arena);
     // SAFETY: expected_token_ptr points to valid initialized tokens within the arena.
     let uint_array = unsafe {
-        wrap_tokens_as_uint32_array(
-            Arc::clone(&arena_arc),
-            expected_token_ptr,
-            token_count,
-        )
+        wrap_tokens_as_uint32_array(Arc::clone(&arena_arc), expected_token_ptr, token_count)
     }
     .expect("wrap tokens");
 
@@ -241,10 +232,8 @@ fn test_arrow_tensor_views_pointer_identity_and_live_mutation() {
     let initial_floats: Vec<f32> = (0..32).map(|x| x as f32 * 0.5).collect();
     // SAFETY: mut_slice points to float_count * 4 valid bytes in the arena.
     unsafe {
-        let mut_slice = std::slice::from_raw_parts_mut(
-            arena_ptr.add(float_offset).cast_mut(),
-            float_count * 4,
-        );
+        let mut_slice =
+            std::slice::from_raw_parts_mut(arena_ptr.add(float_offset).cast_mut(), float_count * 4);
         mut_slice.copy_from_slice(initial_floats.as_bytes());
     }
 
@@ -291,8 +280,7 @@ fn test_arrow_tensor_views_pointer_identity_and_live_mutation() {
     );
 
     // 4. ShmTensorViews end-to-end pointer bit-for-bit check
-    let mut views_arena =
-        SharedMemoryArena::create("views_arena", 65536).expect("views arena");
+    let mut views_arena = SharedMemoryArena::create("views_arena", 65536).expect("views arena");
     let views_ptr = views_arena.as_ptr();
 
     let token_slots_off: u64 = 2048;
@@ -349,11 +337,9 @@ fn test_arrow_tensor_views_pointer_identity_and_live_mutation() {
     let logits_view = views.logits_view().expect("logits_view");
 
     // SAFETY: token_slot_base + 16 and slab_base + 64 are aligned and bounded.
-    let expected_view_token_ptr =
-        unsafe { views_ptr.add(token_slot_base + 16).cast::<u32>() };
+    let expected_view_token_ptr = unsafe { views_ptr.add(token_slot_base + 16).cast::<u32>() };
     // SAFETY: slab_base + 64 is aligned and within arena bounds.
-    let expected_view_logits_ptr =
-        unsafe { views_ptr.add(slab_base + 64).cast::<f32>() };
+    let expected_view_logits_ptr = unsafe { views_ptr.add(slab_base + 64).cast::<f32>() };
 
     assert_eq!(
         token_view.values().as_ptr(),
@@ -378,14 +364,15 @@ fn test_arrow_views_reject_unaligned_pointers() {
         // SAFETY: offset is within arena bounds (4096).
         let unaligned_token_ptr = unsafe { arena_ptr.add(offset).cast::<u32>() };
         // SAFETY: Testing rejection of unaligned pointer by wrap_tokens_as_uint32_array.
-        let result = unsafe {
-            wrap_tokens_as_uint32_array(Arc::clone(&arena_arc), unaligned_token_ptr, 4)
-        };
+        let result =
+            unsafe { wrap_tokens_as_uint32_array(Arc::clone(&arena_arc), unaligned_token_ptr, 4) };
         match result {
             Err(K3Error::TensorBoundsError { reason, .. }) => {
                 assert!(reason.contains("not 4-byte aligned"), "Reason: {reason}");
             }
-            other => panic!("Expected alignment TensorBoundsError for offset {offset}, got {other:?}"),
+            other => {
+                panic!("Expected alignment TensorBoundsError for offset {offset}, got {other:?}")
+            }
         }
 
         // SAFETY: offset is within arena bounds (4096).
@@ -403,7 +390,9 @@ fn test_arrow_views_reject_unaligned_pointers() {
             Err(K3Error::TensorBoundsError { reason, .. }) => {
                 assert!(reason.contains("not 4-byte aligned"), "Reason: {reason}");
             }
-            other => panic!("Expected alignment TensorBoundsError for offset {offset}, got {other:?}"),
+            other => {
+                panic!("Expected alignment TensorBoundsError for offset {offset}, got {other:?}")
+            }
         }
     }
 }
@@ -450,9 +439,13 @@ fn test_concurrent_multi_mapping_stress() {
         let stop_clone = Arc::clone(&stop);
 
         handles.push(thread::spawn(move || {
-            let reader_arena =
-                SharedMemoryArena::from_existing_fd(dup_fd, len, &format!("reader_{thread_idx}"), true)
-                    .expect("reader arena");
+            let reader_arena = SharedMemoryArena::from_existing_fd(
+                dup_fd,
+                len,
+                &format!("reader_{thread_idx}"),
+                true,
+            )
+            .expect("reader arena");
             let mut read_cycles = 0;
             while !stop_clone.load(Ordering::Relaxed) && read_cycles < 20_000 {
                 let slice = reader_arena.slice(0, 8).expect("reader slice");

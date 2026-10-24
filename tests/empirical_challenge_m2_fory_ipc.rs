@@ -25,21 +25,22 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use k3_core::ipc::protocol::{
-    create_fory_codec, create_uds_socket_pair, global_fory, recv_frame, recv_msg_frame,
-    send_frame, send_msg_frame, AllocateArenaRequest, AllocateArenaResponse, AttachArenaCommand,
-    DeallocateArenaRequest, DeallocateArenaResponse, ForwardPassCommand, ForwardPassCompleted,
-    GetArenaFdRequest, GetArenaFdResponse, IpcFrameHeader, IpcMessage, PingRequest, PingResponse,
-    ShutdownCommand, StatusCode, WorkerHeartbeatRequest, WorkerHeartbeatResponse,
-    FLAG_FD_ATTACHED, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_PAYLOAD_LEN,
-};
 use k3_core::ipc::IpcError;
+use k3_core::ipc::protocol::{
+    AllocateArenaRequest, AllocateArenaResponse, AttachArenaCommand, DeallocateArenaRequest,
+    DeallocateArenaResponse, FLAG_FD_ATTACHED, FRAME_HEADER_LEN, FRAME_MAGIC, ForwardPassCommand,
+    ForwardPassCompleted, GetArenaFdRequest, GetArenaFdResponse, IpcFrameHeader, IpcMessage,
+    MAX_PAYLOAD_LEN, PingRequest, PingResponse, ShutdownCommand, StatusCode,
+    WorkerHeartbeatRequest, WorkerHeartbeatResponse, create_fory_codec, create_uds_socket_pair,
+    global_fory, recv_frame, recv_msg_frame, send_frame, send_msg_frame,
+};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn create_test_temp_file() -> (std::path::PathBuf, File) {
     let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("k3_test_ipc_fd_{}_{}.tmp", std::process::id(), id));
+    let path =
+        std::env::temp_dir().join(format!("k3_test_ipc_fd_{}_{}.tmp", std::process::id(), id));
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -73,7 +74,8 @@ fn test_all_14_fory_message_schemas_round_trip() {
     assert_eq!(t1, 101);
     let dec1 = IpcMessage::deserialize(t1, &bytes1, fory).expect("deserialize schema 1");
     assert_eq!(dec1, schema_1);
-    let dec1_ind = IpcMessage::deserialize(t1, &bytes1, &independent_codec).expect("deserialize schema 1 ind");
+    let dec1_ind =
+        IpcMessage::deserialize(t1, &bytes1, &independent_codec).expect("deserialize schema 1 ind");
     assert_eq!(dec1_ind, schema_1);
 
     // 2. AllocateArenaResponse (Type ID: 102) - Success
@@ -123,9 +125,7 @@ fn test_all_14_fory_message_schemas_round_trip() {
     assert_eq!(dec4, schema_4);
 
     // 5. DeallocateArenaRequest (Type ID: 105)
-    let schema_5 = IpcMessage::DeallocateArenaRequest(DeallocateArenaRequest {
-        arena_id: 42,
-    });
+    let schema_5 = IpcMessage::DeallocateArenaRequest(DeallocateArenaRequest { arena_id: 42 });
     assert_eq!(schema_5.type_id(), 105);
     let (t5, bytes5) = schema_5.serialize(fory).expect("serialize schema 5");
     assert_eq!(t5, 105);
@@ -232,9 +232,7 @@ fn test_all_14_fory_message_schemas_round_trip() {
     assert_eq!(dec13, schema_13);
 
     // 14. ShutdownCommand (Type ID: 206)
-    let schema_14 = IpcMessage::ShutdownCommand(ShutdownCommand {
-        graceful: true,
-    });
+    let schema_14 = IpcMessage::ShutdownCommand(ShutdownCommand { graceful: true });
     assert_eq!(schema_14.type_id(), 206);
     let (t14, bytes14) = schema_14.serialize(fory).expect("serialize schema 14");
     assert_eq!(t14, 206);
@@ -350,19 +348,29 @@ fn test_uds_frame_transmission_with_scm_rights_fd() {
     let mut transferred_file = File::from(transferred_fd);
 
     // Verify reading through transferred descriptor produces exact same file content
-    transferred_file.seek(SeekFrom::Start(0)).expect("seek transferred file");
+    transferred_file
+        .seek(SeekFrom::Start(0))
+        .expect("seek transferred file");
     let mut read_buf = Vec::new();
-    transferred_file.read_to_end(&mut read_buf).expect("read transferred file");
+    transferred_file
+        .read_to_end(&mut read_buf)
+        .expect("read transferred file");
     assert_eq!(read_buf, test_data);
 
     // Mutate through transferred descriptor and verify sender observes mutation
     let append_data = b"_MUTATION_OK";
-    transferred_file.write_all(append_data).expect("write via transferred fd");
+    transferred_file
+        .write_all(append_data)
+        .expect("write via transferred fd");
     transferred_file.flush().expect("flush via transferred fd");
 
-    temp_file.seek(SeekFrom::Start(0)).expect("seek original file");
+    temp_file
+        .seek(SeekFrom::Start(0))
+        .expect("seek original file");
     let mut updated_buf = Vec::new();
-    temp_file.read_to_end(&mut updated_buf).expect("read original file");
+    temp_file
+        .read_to_end(&mut updated_buf)
+        .expect("read original file");
     let mut expected_all = test_data.to_vec();
     expected_all.extend_from_slice(append_data);
     assert_eq!(updated_buf, expected_all);
@@ -392,7 +400,10 @@ fn test_corrupted_magic_rejected_safely() {
         buf[8..12].copy_from_slice(&64_u32.to_be_bytes());
 
         let decode_result = IpcFrameHeader::decode(&buf);
-        assert!(decode_result.is_err(), "Magic 0x{bad_magic:08X} should be rejected");
+        assert!(
+            decode_result.is_err(),
+            "Magic 0x{bad_magic:08X} should be rejected"
+        );
 
         let io_err = decode_result.unwrap_err();
         assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
@@ -415,7 +426,13 @@ fn test_corrupted_magic_rejected_safely() {
     bad_header[8..12].copy_from_slice(&0_u32.to_be_bytes());
 
     // Write bad header from fd_a
-    let sent = unsafe { libc::write(fd_a.as_raw_fd(), bad_header.as_ptr().cast(), FRAME_HEADER_LEN) };
+    let sent = unsafe {
+        libc::write(
+            fd_a.as_raw_fd(),
+            bad_header.as_ptr().cast(),
+            FRAME_HEADER_LEN,
+        )
+    };
     assert_eq!(sent, FRAME_HEADER_LEN as isize);
 
     // fd_b calls recv_frame and must safely reject
@@ -450,7 +467,10 @@ fn test_oversized_payload_rejected_safely() {
         buf[8..12].copy_from_slice(&bad_len.to_be_bytes());
 
         let decode_result = IpcFrameHeader::decode(&buf);
-        assert!(decode_result.is_err(), "Payload len {bad_len} should be rejected");
+        assert!(
+            decode_result.is_err(),
+            "Payload len {bad_len} should be rejected"
+        );
 
         let io_err = decode_result.unwrap_err();
         assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
@@ -561,7 +581,11 @@ fn test_adversarial_flag_fd_attached_without_actual_fd_rejected() {
 
     // Write header + payload without SCM_RIGHTS cmsg
     unsafe {
-        libc::write(fd_a.as_raw_fd(), header_buf.as_ptr().cast(), FRAME_HEADER_LEN);
+        libc::write(
+            fd_a.as_raw_fd(),
+            header_buf.as_ptr().cast(),
+            FRAME_HEADER_LEN,
+        );
         libc::write(fd_a.as_raw_fd(), dummy_payload.as_ptr().cast(), 8);
     }
 
@@ -569,7 +593,10 @@ fn test_adversarial_flag_fd_attached_without_actual_fd_rejected() {
     assert!(recv_res.is_err());
     let err = recv_res.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("FLAG_FD_ATTACHED but no SCM_RIGHTS FD was delivered"));
+    assert!(
+        err.to_string()
+            .contains("FLAG_FD_ATTACHED but no SCM_RIGHTS FD was delivered")
+    );
 }
 
 #[test]
@@ -607,7 +634,11 @@ fn test_adversarial_truncated_payload_returns_unexpected_eof() {
     header.encode(&mut header_buf);
 
     unsafe {
-        libc::write(fd_a.as_raw_fd(), header_buf.as_ptr().cast(), FRAME_HEADER_LEN);
+        libc::write(
+            fd_a.as_raw_fd(),
+            header_buf.as_ptr().cast(),
+            FRAME_HEADER_LEN,
+        );
         let partial_payload = [0xAA_u8; 10];
         libc::write(fd_a.as_raw_fd(), partial_payload.as_ptr().cast(), 10);
     }
@@ -647,7 +678,9 @@ fn test_adversarial_boundary_and_unicode_payloads() {
         n_ctx: u32::MAX,
         max_blocks: u32::MAX,
     });
-    let (t_uni, b_uni) = msg_unicode.serialize(fory).expect("serialize unicode model_id");
+    let (t_uni, b_uni) = msg_unicode
+        .serialize(fory)
+        .expect("serialize unicode model_id");
     let dec_uni = IpcMessage::deserialize(t_uni, &b_uni, fory).expect("deserialize unicode");
     assert_eq!(dec_uni, msg_unicode);
 
@@ -661,7 +694,9 @@ fn test_adversarial_boundary_and_unicode_payloads() {
         block_indices: large_indices,
         is_prefill: false,
     });
-    let (t_lb, b_lb) = msg_large_blocks.serialize(fory).expect("serialize large blocks");
+    let (t_lb, b_lb) = msg_large_blocks
+        .serialize(fory)
+        .expect("serialize large blocks");
     let dec_lb = IpcMessage::deserialize(t_lb, &b_lb, fory).expect("deserialize large blocks");
     assert_eq!(dec_lb, msg_large_blocks);
 
@@ -712,8 +747,14 @@ fn test_adversarial_status_code_ipc_error_mapping_gap() {
 
     // Meanwhile, if an explicit ProtocolError is constructed, it maps to code 22:
     let explicit_proto_err = IpcError::ProtocolError("framing violation".to_owned());
-    assert_eq!(StatusCode::from_ipc_error(&explicit_proto_err), StatusCode::ProtocolError);
-    assert_eq!(StatusCode::from_ipc_error(&explicit_proto_err).as_exit_code(), 22);
+    assert_eq!(
+        StatusCode::from_ipc_error(&explicit_proto_err),
+        StatusCode::ProtocolError
+    );
+    assert_eq!(
+        StatusCode::from_ipc_error(&explicit_proto_err).as_exit_code(),
+        22
+    );
 }
 
 #[test]
@@ -734,6 +775,8 @@ fn test_adversarial_mismatched_type_id_deserialization() {
     // Attempt to deserialize those bytes as PingRequest (Type ID 107)
     // Should fail cleanly without crashing or undefined behavior
     let res = IpcMessage::deserialize(107, &bytes, fory);
-    assert!(res.is_err(), "Deserializing mismatched type bytes should fail");
+    assert!(
+        res.is_err(),
+        "Deserializing mismatched type bytes should fail"
+    );
 }
-

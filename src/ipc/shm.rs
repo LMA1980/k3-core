@@ -49,7 +49,9 @@ impl fmt::Display for IpcError {
             Self::IoError { operation, reason } => {
                 write!(f, "[ipc_io_error] {operation} failed: {reason}")
             }
-            Self::InsufficientLockableMemory(err) | Self::TensorBoundsError(err) => write!(f, "{err}"),
+            Self::InsufficientLockableMemory(err) | Self::TensorBoundsError(err) => {
+                write!(f, "{err}")
+            }
             Self::ProtocolError(reason) => write!(f, "[ipc_protocol_error] {reason}"),
         }
     }
@@ -176,7 +178,11 @@ impl SharedMemoryArena {
     /// Returns [`IpcError::InsufficientLockableMemory`] if `lock_memory` is true and length
     /// exceeds the configured memlock ceiling or `mlock` fails.
     /// Returns [`IpcError::IoError`] if OS allocation or mapping fails.
-    #[allow(clippy::too_many_lines, clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_wrap,
+        clippy::cast_possible_truncation
+    )]
     pub fn create_with_options(options: ArenaOptions) -> Result<Self, IpcError> {
         let aligned_len = align_to_page(options.len);
 
@@ -196,17 +202,15 @@ impl SharedMemoryArena {
 
         #[cfg(target_os = "linux")]
         {
-            let cname = std::ffi::CString::new(options.name.as_str()).map_err(|e| IpcError::IoError {
-                operation: "memfd_create".to_owned(),
-                reason: format!("invalid cstring name: {e}"),
-            })?;
+            let cname =
+                std::ffi::CString::new(options.name.as_str()).map_err(|e| IpcError::IoError {
+                    operation: "memfd_create".to_owned(),
+                    reason: format!("invalid cstring name: {e}"),
+                })?;
 
             // SAFETY: libc::memfd_create creates an anonymous shared memory file descriptor with CLOEXEC and ALLOW_SEALING.
             let raw_fd = unsafe {
-                libc::memfd_create(
-                    cname.as_ptr(),
-                    libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
-                )
+                libc::memfd_create(cname.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING)
             };
             if raw_fd >= 0 {
                 // SAFETY: ftruncate sets the backing file size for raw_fd.
@@ -226,10 +230,11 @@ impl SharedMemoryArena {
                     if ptr != libc::MAP_FAILED {
                         // SAFETY: raw_fd is verified valid and ownership is transferred to OwnedFd.
                         let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-                        let non_null = NonNull::new(ptr.cast::<u8>()).ok_or_else(|| IpcError::IoError {
-                            operation: "mmap".to_owned(),
-                            reason: "null pointer returned from mmap".to_owned(),
-                        })?;
+                        let non_null =
+                            NonNull::new(ptr.cast::<u8>()).ok_or_else(|| IpcError::IoError {
+                                operation: "mmap".to_owned(),
+                                reason: "null pointer returned from mmap".to_owned(),
+                            })?;
 
                         // Zero-initialize mapped arena
                         // SAFETY: ptr is valid for writes up to aligned_len bytes.
@@ -255,7 +260,9 @@ impl SharedMemoryArena {
                     }
                 }
                 // SAFETY: Clean up file descriptor on failure path.
-                unsafe { libc::close(raw_fd); }
+                unsafe {
+                    libc::close(raw_fd);
+                }
             }
         }
 
@@ -278,7 +285,9 @@ impl SharedMemoryArena {
                 if raw_fd >= 0 {
                     // Unlink immediately so object is automatically cleaned up when all FDs close
                     // SAFETY: shm_unlink removes the named reference immediately while open FD survives.
-                    unsafe { libc::shm_unlink(cname.as_ptr()); }
+                    unsafe {
+                        libc::shm_unlink(cname.as_ptr());
+                    }
 
                     // SAFETY: ftruncate sets the shm capacity.
                     let trunc_ret = unsafe { libc::ftruncate(raw_fd, aligned_len as libc::off_t) };
@@ -297,9 +306,11 @@ impl SharedMemoryArena {
                         if ptr != libc::MAP_FAILED {
                             // SAFETY: raw_fd is valid and transferred to OwnedFd.
                             let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-                            let non_null = NonNull::new(ptr.cast::<u8>()).ok_or_else(|| IpcError::IoError {
-                                operation: "shm_open_mmap".to_owned(),
-                                reason: "null pointer returned from mmap".to_owned(),
+                            let non_null = NonNull::new(ptr.cast::<u8>()).ok_or_else(|| {
+                                IpcError::IoError {
+                                    operation: "shm_open_mmap".to_owned(),
+                                    reason: "null pointer returned from mmap".to_owned(),
+                                }
                             })?;
 
                             // SAFETY: ptr is valid for writes up to aligned_len.
@@ -325,13 +336,16 @@ impl SharedMemoryArena {
                         }
                     }
                     // SAFETY: Clean up raw_fd on failure.
-                    unsafe { libc::close(raw_fd); }
+                    unsafe {
+                        libc::close(raw_fd);
+                    }
                 }
             }
         }
 
         // Unlinked temporary file fallback (ensures operation even under restrictive permissions)
-        let temp_path = std::env::temp_dir().join(format!("k3_shm_{}_{pid}_{seq}.shm", options.name));
+        let temp_path =
+            std::env::temp_dir().join(format!("k3_shm_{}_{pid}_{seq}.shm", options.name));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -344,10 +358,11 @@ impl SharedMemoryArena {
             })?;
 
         let aligned_len_u64 = u64::try_from(aligned_len).unwrap_or(u64::MAX);
-        file.set_len(aligned_len_u64).map_err(|err| IpcError::IoError {
-            operation: "ftruncate".to_owned(),
-            reason: format!("failed to truncate shm file: {err}"),
-        })?;
+        file.set_len(aligned_len_u64)
+            .map_err(|err| IpcError::IoError {
+                operation: "ftruncate".to_owned(),
+                reason: format!("failed to truncate shm file: {err}"),
+            })?;
 
         let raw_fd = file.as_raw_fd();
         // SAFETY: mmap maps the tempfile into process virtual memory with MAP_SHARED.
@@ -524,7 +539,10 @@ impl SharedMemoryArena {
     /// Panics if the arena was mapped as read-only.
     #[must_use]
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        assert!(!self.read_only, "cannot get mutable pointer for read-only arena");
+        assert!(
+            !self.read_only,
+            "cannot get mutable pointer for read-only arena"
+        );
         self.ptr.as_ptr()
     }
 
@@ -540,7 +558,10 @@ impl SharedMemoryArena {
     /// # Panics
     /// Panics if the arena was mapped as read-only.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        assert!(!self.read_only, "cannot get mutable slice for read-only arena");
+        assert!(
+            !self.read_only,
+            "cannot get mutable slice for read-only arena"
+        );
         // SAFETY: self.ptr is valid for reads/writes up to self.len, &mut self guarantees exclusivity.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
@@ -550,13 +571,15 @@ impl SharedMemoryArena {
     /// # Errors
     /// Returns [`K3Error::TensorBoundsError`] if `offset + len` overflows or exceeds arena length.
     pub fn slice(&self, offset: usize, len: usize) -> Result<&[u8], K3Error> {
-        let end = offset.checked_add(len).ok_or_else(|| K3Error::TensorBoundsError {
-            tensor_name: self.name.clone(),
-            offset,
-            byte_len: len,
-            buffer_len: self.len,
-            reason: "offset + len calculation overflowed usize".to_owned(),
-        })?;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: self.name.clone(),
+                offset,
+                byte_len: len,
+                buffer_len: self.len,
+                reason: "offset + len calculation overflowed usize".to_owned(),
+            })?;
 
         if end > self.len {
             return Err(K3Error::TensorBoundsError {
@@ -564,13 +587,19 @@ impl SharedMemoryArena {
                 offset,
                 byte_len: len,
                 buffer_len: self.len,
-                reason: format!("requested range [{offset}..{end}] exceeds arena capacity {}", self.len),
+                reason: format!(
+                    "requested range [{offset}..{end}] exceeds arena capacity {}",
+                    self.len
+                ),
             });
         }
 
         // SAFETY: Bounds checked above.
         unsafe {
-            Ok(std::slice::from_raw_parts(self.ptr.as_ptr().add(offset), len))
+            Ok(std::slice::from_raw_parts(
+                self.ptr.as_ptr().add(offset),
+                len,
+            ))
         }
     }
 
@@ -590,13 +619,15 @@ impl SharedMemoryArena {
             });
         }
 
-        let end = offset.checked_add(len).ok_or_else(|| K3Error::TensorBoundsError {
-            tensor_name: self.name.clone(),
-            offset,
-            byte_len: len,
-            buffer_len: self.len,
-            reason: "offset + len calculation overflowed usize".to_owned(),
-        })?;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: self.name.clone(),
+                offset,
+                byte_len: len,
+                buffer_len: self.len,
+                reason: "offset + len calculation overflowed usize".to_owned(),
+            })?;
 
         if end > self.len {
             return Err(K3Error::TensorBoundsError {
@@ -604,13 +635,19 @@ impl SharedMemoryArena {
                 offset,
                 byte_len: len,
                 buffer_len: self.len,
-                reason: format!("requested range [{offset}..{end}] exceeds arena capacity {}", self.len),
+                reason: format!(
+                    "requested range [{offset}..{end}] exceeds arena capacity {}",
+                    self.len
+                ),
             });
         }
 
         // SAFETY: Bounds checked above, &mut self guarantees exclusivity.
         unsafe {
-            Ok(std::slice::from_raw_parts_mut(self.ptr.as_ptr().add(offset), len))
+            Ok(std::slice::from_raw_parts_mut(
+                self.ptr.as_ptr().add(offset),
+                len,
+            ))
         }
     }
 
@@ -662,12 +699,14 @@ impl SharedMemoryArena {
         })?;
         let entry_size = size_of::<KvBlockMeta>();
         let offset = meta_offset
-            .checked_add(block_idx.checked_mul(entry_size).ok_or_else(|| K3Error::TensorBoundsError {
-                tensor_name: "kv_block_meta".to_owned(),
-                offset: 0,
-                byte_len: entry_size,
-                buffer_len: self.len,
-                reason: "block index offset overflowed usize".to_owned(),
+            .checked_add(block_idx.checked_mul(entry_size).ok_or_else(|| {
+                K3Error::TensorBoundsError {
+                    tensor_name: "kv_block_meta".to_owned(),
+                    offset: 0,
+                    byte_len: entry_size,
+                    buffer_len: self.len,
+                    reason: "block index offset overflowed usize".to_owned(),
+                }
             })?)
             .ok_or_else(|| K3Error::TensorBoundsError {
                 tensor_name: "kv_block_meta".to_owned(),
@@ -703,12 +742,14 @@ impl SharedMemoryArena {
         })?;
         let entry_size = size_of::<KvBlockMeta>();
         let offset = meta_offset
-            .checked_add(block_idx.checked_mul(entry_size).ok_or_else(|| K3Error::TensorBoundsError {
-                tensor_name: "kv_block_meta".to_owned(),
-                offset: 0,
-                byte_len: entry_size,
-                buffer_len: self.len,
-                reason: "block index offset overflowed usize".to_owned(),
+            .checked_add(block_idx.checked_mul(entry_size).ok_or_else(|| {
+                K3Error::TensorBoundsError {
+                    tensor_name: "kv_block_meta".to_owned(),
+                    offset: 0,
+                    byte_len: entry_size,
+                    buffer_len: self.len,
+                    reason: "block index offset overflowed usize".to_owned(),
+                }
             })?)
             .ok_or_else(|| K3Error::TensorBoundsError {
                 tensor_name: "kv_block_meta".to_owned(),
@@ -819,10 +860,12 @@ pub trait ArenaSocketExt {
 
 impl ArenaSocketExt for SharedMemoryArena {
     fn send_arena_fd(&self, stream: &UnixStream, payload: &[u8]) -> Result<usize, IpcError> {
-        stream.send_with_fd(payload, &[self.as_raw_fd()]).map_err(|err| IpcError::IoError {
-            operation: "send_arena_fd".to_owned(),
-            reason: format!("failed to send arena fd over UDS: {err}"),
-        })
+        stream
+            .send_with_fd(payload, &[self.as_raw_fd()])
+            .map_err(|err| IpcError::IoError {
+                operation: "send_arena_fd".to_owned(),
+                reason: format!("failed to send arena fd over UDS: {err}"),
+            })
     }
 }
 
@@ -835,10 +878,13 @@ pub fn recv_arena_fd(
     buf: &mut [u8],
 ) -> Result<(usize, Option<OwnedFd>), IpcError> {
     let mut fds = [0 as RawFd; 1];
-    let (bytes_read, fds_read) = stream.recv_with_fd(buf, &mut fds).map_err(|err| IpcError::IoError {
-        operation: "recv_arena_fd".to_owned(),
-        reason: format!("failed to receive fd over UDS: {err}"),
-    })?;
+    let (bytes_read, fds_read) =
+        stream
+            .recv_with_fd(buf, &mut fds)
+            .map_err(|err| IpcError::IoError {
+                operation: "recv_arena_fd".to_owned(),
+                reason: format!("failed to receive fd over UDS: {err}"),
+            })?;
 
     let received_fd = if fds_read > 0 && fds[0] >= 0 {
         // SAFETY: sendfd verified fds_read > 0 and fd is a valid descriptor transferred via SCM_RIGHTS.
@@ -904,7 +950,10 @@ mod tests {
             let mut_slice = arena.slice_mut(64, 4).expect("valid mutable subslice");
             mut_slice.copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
         }
-        assert_eq!(arena.slice(64, 4).expect("read subslice"), &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            arena.slice(64, 4).expect("read subslice"),
+            &[0xDE, 0xAD, 0xBE, 0xEF]
+        );
     }
 
     #[test]
@@ -922,7 +971,10 @@ mod tests {
 
         assert_eq!(arena2.len(), arena1.len());
         assert!(arena2.is_read_only());
-        assert_eq!(arena2.slice(0, 8).expect("read from mapped fd"), b"SHARED42");
+        assert_eq!(
+            arena2.slice(0, 8).expect("read from mapped fd"),
+            b"SHARED42"
+        );
     }
 
     #[test]
@@ -956,7 +1008,10 @@ mod tests {
     fn test_arena_uds_fd_transfer_roundtrip() {
         let (s1, s2) = UnixStream::pair().expect("unix stream pair");
         let mut arena = SharedMemoryArena::create("uds_arena", 4096).expect("create arena");
-        arena.slice_mut(0, 4).expect("slice_mut").copy_from_slice(b"TEST");
+        arena
+            .slice_mut(0, 4)
+            .expect("slice_mut")
+            .copy_from_slice(b"TEST");
 
         let handle = std::thread::spawn(move || {
             let mut buf = [0_u8; 32];
@@ -966,7 +1021,9 @@ mod tests {
             assert_eq!(received_arena.slice(0, 4).expect("read"), b"TEST");
         });
 
-        let sent = arena.send_arena_fd(&s1, b"ATTACH_CMD").expect("send_arena_fd");
+        let sent = arena
+            .send_arena_fd(&s1, b"ATTACH_CMD")
+            .expect("send_arena_fd");
         assert_eq!(sent, 10);
         handle.join().expect("thread join");
     }
@@ -982,7 +1039,9 @@ mod tests {
         let err = SharedMemoryArena::create_with_options(options);
         assert!(matches!(
             err,
-            Err(IpcError::InsufficientLockableMemory(K3Error::InsufficientLockableMemory { .. }))
+            Err(IpcError::InsufficientLockableMemory(
+                K3Error::InsufficientLockableMemory { .. }
+            ))
         ));
     }
 }

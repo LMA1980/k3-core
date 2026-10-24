@@ -3,8 +3,8 @@
 //! Provides the canonical machine-readable [`CostProfile`] baseline schema for static scheduling
 //! weights and operator tuning advisories (US-04, ADR-010, ADR-032, ADR-034).
 
-use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::gguf::TensorDescriptor;
 
