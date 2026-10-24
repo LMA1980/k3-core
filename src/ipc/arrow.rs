@@ -147,15 +147,16 @@ pub unsafe fn wrap_tokens_as_uint32_array<T: Send + Sync + RefUnwindSafe + 'stat
         });
     }
 
-    let byte_len = token_count
-        .checked_mul(size_of::<u32>())
-        .ok_or_else(|| K3Error::TensorBoundsError {
-            tensor_name: "token_input_array".to_owned(),
-            offset: 0,
-            byte_len: usize::MAX,
-            buffer_len: 0,
-            reason: "token count byte length overflowed usize".to_owned(),
-        })?;
+    let byte_len =
+        token_count
+            .checked_mul(size_of::<u32>())
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: "token_input_array".to_owned(),
+                offset: 0,
+                byte_len: usize::MAX,
+                buffer_len: 0,
+                reason: "token count byte length overflowed usize".to_owned(),
+            })?;
 
     // SAFETY: Caller guarantees pointer validity and lifetime managed by owner.
     let buffer = unsafe { create_arrow_buffer_from_shm(owner, tokens_ptr.cast::<u8>(), byte_len)? };
@@ -191,15 +192,16 @@ pub unsafe fn wrap_floats_as_float32_array<T: Send + Sync + RefUnwindSafe + 'sta
         });
     }
 
-    let byte_len = element_count
-        .checked_mul(size_of::<f32>())
-        .ok_or_else(|| K3Error::TensorBoundsError {
-            tensor_name: name.to_owned(),
-            offset: 0,
-            byte_len: usize::MAX,
-            buffer_len: 0,
-            reason: format!("element count {element_count} byte length overflowed usize"),
-        })?;
+    let byte_len =
+        element_count
+            .checked_mul(size_of::<f32>())
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: name.to_owned(),
+                offset: 0,
+                byte_len: usize::MAX,
+                buffer_len: 0,
+                reason: format!("element count {element_count} byte length overflowed usize"),
+            })?;
 
     // SAFETY: Caller guarantees pointer validity and lifetime managed by owner.
     let buffer = unsafe { create_arrow_buffer_from_shm(owner, data_ptr.cast::<u8>(), byte_len)? };
@@ -233,20 +235,23 @@ impl ShmTensorViews {
     #[allow(clippy::cast_ptr_alignment)]
     pub fn tokens_view(&self, slot_idx: usize) -> Result<UInt32Array, K3Error> {
         let hdr = self.arena.header()?;
-        let slot_offset = usize::try_from(hdr.token_slots_offset).map_err(|e| K3Error::TensorBoundsError {
-            tensor_name: "tokens_view".to_owned(),
-            offset: 0,
-            byte_len: 0,
-            buffer_len: self.arena.len(),
-            reason: format!("token_slots_offset exceeds usize: {e}"),
-        })?;
-        let slot_base = slot_offset
-            .checked_add(slot_idx.checked_mul(64 * 4 + 16).ok_or_else(|| K3Error::TensorBoundsError {
+        let slot_offset =
+            usize::try_from(hdr.token_slots_offset).map_err(|e| K3Error::TensorBoundsError {
                 tensor_name: "tokens_view".to_owned(),
                 offset: 0,
                 byte_len: 0,
                 buffer_len: self.arena.len(),
-                reason: "slot index overflowed usize".to_owned(),
+                reason: format!("token_slots_offset exceeds usize: {e}"),
+            })?;
+        let slot_base = slot_offset
+            .checked_add(slot_idx.checked_mul(64 * 4 + 16).ok_or_else(|| {
+                K3Error::TensorBoundsError {
+                    tensor_name: "tokens_view".to_owned(),
+                    offset: 0,
+                    byte_len: 0,
+                    buffer_len: self.arena.len(),
+                    reason: "slot index overflowed usize".to_owned(),
+                }
             })?)
             .ok_or_else(|| K3Error::TensorBoundsError {
                 tensor_name: "tokens_view".to_owned(),
@@ -257,13 +262,15 @@ impl ShmTensorViews {
             })?;
 
         let slot_slice = self.arena.slice(slot_base, 16)?;
-        let token_hdr = super::layout::TokenInputSlotHeader::ref_from_bytes(slot_slice)
-            .map_err(|e| K3Error::TensorBoundsError {
-                tensor_name: format!("token_slot[{slot_idx}]"),
-                offset: slot_base,
-                byte_len: 16,
-                buffer_len: self.arena.len(),
-                reason: format!("failed to decode TokenInputSlotHeader: {e}"),
+        let token_hdr =
+            super::layout::TokenInputSlotHeader::ref_from_bytes(slot_slice).map_err(|e| {
+                K3Error::TensorBoundsError {
+                    tensor_name: format!("token_slot[{slot_idx}]"),
+                    offset: slot_base,
+                    byte_len: 16,
+                    buffer_len: self.arena.len(),
+                    reason: format!("failed to decode TokenInputSlotHeader: {e}"),
+                }
             })?;
 
         let token_count = token_hdr.token_len as usize;
@@ -287,21 +294,24 @@ impl ShmTensorViews {
     #[allow(clippy::cast_ptr_alignment)]
     pub fn logits_view(&self) -> Result<Float32Array, K3Error> {
         let hdr = self.arena.header()?;
-        let slab_offset = usize::try_from(hdr.output_slabs_offset).map_err(|e| K3Error::TensorBoundsError {
-            tensor_name: "output_slab".to_owned(),
-            offset: 0,
-            byte_len: 0,
-            buffer_len: self.arena.len(),
-            reason: format!("output_slabs_offset exceeds usize: {e}"),
-        })?;
-        let slab_slice = self.arena.slice(slab_offset, 64)?;
-        let slab_hdr = super::layout::OutputSlabHeader::ref_from_bytes(slab_slice)
-            .map_err(|e| K3Error::TensorBoundsError {
+        let slab_offset =
+            usize::try_from(hdr.output_slabs_offset).map_err(|e| K3Error::TensorBoundsError {
                 tensor_name: "output_slab".to_owned(),
-                offset: slab_offset,
-                byte_len: 64,
+                offset: 0,
+                byte_len: 0,
                 buffer_len: self.arena.len(),
-                reason: format!("failed to decode OutputSlabHeader: {e}"),
+                reason: format!("output_slabs_offset exceeds usize: {e}"),
+            })?;
+        let slab_slice = self.arena.slice(slab_offset, 64)?;
+        let slab_hdr =
+            super::layout::OutputSlabHeader::ref_from_bytes(slab_slice).map_err(|e| {
+                K3Error::TensorBoundsError {
+                    tensor_name: "output_slab".to_owned(),
+                    offset: slab_offset,
+                    byte_len: 64,
+                    buffer_len: self.arena.len(),
+                    reason: format!("failed to decode OutputSlabHeader: {e}"),
+                }
             })?;
 
         let vocab_size = slab_hdr.vocab_size as usize;
@@ -341,7 +351,9 @@ mod tests {
         let sliced = slice_arrow_buffer(&buf, 4, 12).expect("slice");
         assert_eq!(sliced.len(), 12);
         // SAFETY: 4 bytes into the buffer is &owner[1].
-        assert_eq!(sliced.as_ptr(), unsafe { owner.as_ptr().add(1).cast::<u8>() });
+        assert_eq!(sliced.as_ptr(), unsafe {
+            owner.as_ptr().add(1).cast::<u8>()
+        });
 
         let oob = slice_arrow_buffer(&buf, 10, 20);
         assert!(matches!(oob, Err(K3Error::TensorBoundsError { .. })));
@@ -353,10 +365,9 @@ mod tests {
         let owner = Arc::new(tokens);
 
         // SAFETY: tokens array is 4-byte aligned and has 4 elements.
-        let array = unsafe {
-            wrap_tokens_as_uint32_array(Arc::clone(&owner), owner.as_ptr(), owner.len())
-        }
-        .expect("wrap tokens array");
+        let array =
+            unsafe { wrap_tokens_as_uint32_array(Arc::clone(&owner), owner.as_ptr(), owner.len()) }
+                .expect("wrap tokens array");
 
         assert_eq!(array.len(), 4);
         assert_eq!(array.value(0), 101);
@@ -371,7 +382,12 @@ mod tests {
 
         // SAFETY: logits array is 4-byte aligned and has 4 elements.
         let array = unsafe {
-            wrap_floats_as_float32_array(Arc::clone(&owner), "test_logits", owner.as_ptr(), owner.len())
+            wrap_floats_as_float32_array(
+                Arc::clone(&owner),
+                "test_logits",
+                owner.as_ptr(),
+                owner.len(),
+            )
         }
         .expect("wrap floats array");
 
@@ -400,7 +416,10 @@ mod tests {
                 token_len: 3,
                 start_position: 0,
             };
-            arena.slice_mut(1024, 16).expect("slot_hdr").copy_from_slice(slot_hdr.as_bytes());
+            arena
+                .slice_mut(1024, 16)
+                .expect("slot_hdr")
+                .copy_from_slice(slot_hdr.as_bytes());
             let tokens_slice = arena.slice_mut(1040, 12).expect("tokens_slice");
             let tokens = [42_u32, 43, 44];
             tokens_slice.copy_from_slice(tokens.as_bytes());
@@ -415,7 +434,10 @@ mod tests {
                 status: super::super::layout::SLAB_STATUS_WRITTEN,
                 _reserved: [0; 44],
             };
-            arena.slice_mut(4096, 64).expect("slab_hdr").copy_from_slice(slab_hdr.as_bytes());
+            arena
+                .slice_mut(4096, 64)
+                .expect("slab_hdr")
+                .copy_from_slice(slab_hdr.as_bytes());
             let logits_slice = arena.slice_mut(4160, 16).expect("logits_slice");
             let logits = [1.0_f32, 2.0, 3.0, 4.0];
             logits_slice.copy_from_slice(logits.as_bytes());

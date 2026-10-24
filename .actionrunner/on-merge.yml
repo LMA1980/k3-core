@@ -7,7 +7,7 @@ env:
 steps:
   - name: "Synchronize Dependencies & Workspace Bridge"
     run: |
-            mkdir -p ..
+      mkdir -p ..
       for repo in k3-core k3-arch-synthetic k3-kernels-rvv k3-tokenizer k3-kv k3-engine k3-manager; do
         if [ ! -d "../$repo/.git" ]; then
           git clone --depth 1 https://github.com/LMA1980/$repo.git ../$repo || true

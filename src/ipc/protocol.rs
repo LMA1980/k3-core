@@ -344,7 +344,9 @@ impl IpcMessage {
             204 => Ok(Self::WorkerHeartbeatRequest(fory.deserialize(payload)?)),
             205 => Ok(Self::WorkerHeartbeatResponse(fory.deserialize(payload)?)),
             206 => Ok(Self::ShutdownCommand(fory.deserialize(payload)?)),
-            unknown => Err(fory::Error::type_error(format!("Unknown IPC type ID: {unknown}"))),
+            unknown => Err(fory::Error::type_error(format!(
+                "Unknown IPC type ID: {unknown}"
+            ))),
         }
     }
 }
@@ -358,10 +360,7 @@ impl IpcMessage {
 /// # Errors
 /// Returns [`fory::Error`] on registration failure.
 pub fn create_fory_codec() -> Result<Fory, fory::Error> {
-    let mut fory = Fory::builder()
-        .xlang(false)
-        .compatible(true)
-        .build();
+    let mut fory = Fory::builder().xlang(false).compatible(true).build();
 
     fory.register::<StatusCode>(100)?;
     fory.register::<AllocateArenaRequest>(101)?;
@@ -493,7 +492,10 @@ pub fn send_frame(
         flags |= FLAG_FD_ATTACHED;
     }
     let payload_len_u32 = u32::try_from(payload.len()).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("payload len exceeds u32: {e}"))
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("payload len exceeds u32: {e}"),
+        )
     })?;
 
     let header = IpcFrameHeader::new(type_id, payload_len_u32, flags);
@@ -515,7 +517,8 @@ pub fn send_frame(
     let (cmsg_ptr, cmsg_len) = if let Some(fd) = fd_to_pass {
         // SAFETY: Preparing ancillary control buffer for SCM_RIGHTS FD transfer.
         unsafe {
-            let space = libc::CMSG_SPACE(u32::try_from(size_of::<libc::c_int>()).unwrap_or(4)) as usize;
+            let space =
+                libc::CMSG_SPACE(u32::try_from(size_of::<libc::c_int>()).unwrap_or(4)) as usize;
             if space > cmsg_buffer.len() {
                 return Err(io::Error::other("CMSG space exceeds buffer capacity"));
             }
@@ -529,7 +532,8 @@ pub fn send_frame(
             }
             (*cmsg).cmsg_level = libc::SOL_SOCKET;
             (*cmsg).cmsg_type = libc::SCM_RIGHTS;
-            (*cmsg).cmsg_len = libc::CMSG_LEN(u32::try_from(size_of::<libc::c_int>()).unwrap_or(4)) as _;
+            (*cmsg).cmsg_len =
+                libc::CMSG_LEN(u32::try_from(size_of::<libc::c_int>()).unwrap_or(4)) as _;
 
             std::ptr::write_unaligned(libc::CMSG_DATA(cmsg).cast::<libc::c_int>(), fd);
 
@@ -600,7 +604,10 @@ pub fn recv_frame(sock: RawFd) -> io::Result<(IpcFrameHeader, Vec<u8>, Option<Ow
     let bytes_read = unsafe { libc::recvmsg(sock, &raw mut msg, 0) };
     if bytes_read <= 0 {
         if bytes_read == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Socket closed by peer"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Socket closed by peer",
+            ));
         }
         return Err(io::Error::last_os_error());
     }
@@ -635,7 +642,10 @@ pub fn recv_frame(sock: RawFd) -> io::Result<(IpcFrameHeader, Vec<u8>, Option<Ow
             )
         };
         if n <= 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated frame header"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Truncated frame header",
+            ));
         }
         let n_usize = usize::try_from(n).unwrap_or(0);
         header_read += n_usize;
@@ -665,7 +675,10 @@ pub fn recv_frame(sock: RawFd) -> io::Result<(IpcFrameHeader, Vec<u8>, Option<Ow
                 )
             };
             if n <= 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated frame payload"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Truncated frame payload",
+                ));
             }
             let n_usize = usize::try_from(n).unwrap_or(0);
             total_read += n_usize;
@@ -687,9 +700,7 @@ pub fn create_uds_socket_pair() -> io::Result<(OwnedFd, OwnedFd)> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: fds are guaranteed valid by successful socketpair call.
-    unsafe {
-        Ok((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])))
-    }
+    unsafe { Ok((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))) }
 }
 
 /// Sends an [`IpcMessage`] with optional attached file descriptor over a [`UnixStream`].
@@ -703,7 +714,10 @@ pub fn send_msg_frame(
 ) -> io::Result<()> {
     let fory = global_fory();
     let (type_id, payload) = msg.serialize(fory).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Fory serialization error: {e}"))
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Fory serialization error: {e}"),
+        )
     })?;
     send_frame(stream.as_raw_fd(), type_id, &payload, fd_to_pass)
 }
@@ -716,7 +730,10 @@ pub fn recv_msg_frame(stream: &UnixStream) -> io::Result<(IpcMessage, Option<Own
     let (header, payload, opt_fd) = recv_frame(stream.as_raw_fd())?;
     let fory = global_fory();
     let msg = IpcMessage::deserialize(header.type_id, &payload, fory).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Fory deserialization error: {e}"))
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Fory deserialization error: {e}"),
+        )
     })?;
     Ok((msg, opt_fd))
 }
@@ -782,7 +799,9 @@ mod tests {
         assert_eq!(dec4, fwd_comp);
 
         // 3. Ping / Heartbeat / Shutdown
-        let ping = IpcMessage::PingRequest(PingRequest { timestamp_ns: 999_888 });
+        let ping = IpcMessage::PingRequest(PingRequest {
+            timestamp_ns: 999_888,
+        });
         let (t5, b5) = ping.serialize(fory).expect("serialize ping");
         assert_eq!(t5, 107);
         let dec5 = IpcMessage::deserialize(t5, &b5, fory).expect("deserialize ping");
@@ -828,9 +847,15 @@ mod tests {
 
         // 2. With FD
         let (pipe_r, pipe_w) = create_uds_socket_pair().expect("pipe pair");
-        send_frame(fd_a.as_raw_fd(), 201, b"ATTACH_CMD", Some(pipe_r.as_raw_fd()))
-            .expect("send_frame with fd");
-        let (hdr2, recv_payload2, opt_fd2) = recv_frame(fd_b.as_raw_fd()).expect("recv_frame with fd");
+        send_frame(
+            fd_a.as_raw_fd(),
+            201,
+            b"ATTACH_CMD",
+            Some(pipe_r.as_raw_fd()),
+        )
+        .expect("send_frame with fd");
+        let (hdr2, recv_payload2, opt_fd2) =
+            recv_frame(fd_b.as_raw_fd()).expect("recv_frame with fd");
         assert_eq!(hdr2.type_id, 201);
         assert_eq!(recv_payload2, b"ATTACH_CMD");
         assert!(opt_fd2.is_some());
@@ -853,7 +878,10 @@ mod tests {
             architecture: "foo".to_owned(),
             reason: "bar".to_owned(),
         };
-        assert_eq!(StatusCode::from_k3_error(&cap_err), StatusCode::CapabilityMismatch);
+        assert_eq!(
+            StatusCode::from_k3_error(&cap_err),
+            StatusCode::CapabilityMismatch
+        );
 
         let mem_err = K3Error::InsufficientLockableMemory {
             required_bytes: 100,
@@ -862,6 +890,9 @@ mod tests {
             available_bytes: 10,
             rlimit_memlock_bytes: 80,
         };
-        assert_eq!(StatusCode::from_k3_error(&mem_err), StatusCode::InsufficientLockableMemory);
+        assert_eq!(
+            StatusCode::from_k3_error(&mem_err),
+            StatusCode::InsufficientLockableMemory
+        );
     }
 }

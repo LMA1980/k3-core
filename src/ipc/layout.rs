@@ -226,7 +226,9 @@ impl KvBlockMeta {
 ///
 /// Followed immediately by `token_len * 4` bytes of `u32` token IDs.
 #[repr(C, align(8))]
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, KnownLayout, Immutable)]
+#[derive(
+    Default, Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, KnownLayout, Immutable,
+)]
 pub struct TokenInputSlotHeader {
     /// Unique sequence identifier or request ID for this input.
     pub slot_seq_id: u64,
