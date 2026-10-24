@@ -1,30 +1,47 @@
-version: "1"
+version: "2"
 name: "k3-core Factory Pipeline: Hygiene, Tests, Coverage & Benchmarks"
 
 env:
   CARGO_TERM_COLOR: always
 
-steps:
-  - name: "Verify Rust Formatting (cargo fmt)"
+stages:
+  - id: fmt-check
+    name: "Verify Rust Formatting"
+    tags: ["fmt"]
+    threads: 2
     run: "cargo fmt --check"
-    timeout_seconds: 120
 
-  - name: "Verify Rust Linter & Clippy Rules (cargo clippy)"
+  - id: clippy-check
+    name: "Verify Rust Linter & Clippy Rules"
+    tags: ["clippy"]
+    depends_on: ["fmt-check"]
+    threads: 4
     run: "cargo clippy --all-targets -- -D warnings"
-    timeout_seconds: 300
 
-  - name: "Verify Dependencies Security Advisories (cargo audit)"
+  - id: audit-check
+    name: "Verify Dependencies Security Advisories"
+    tags: ["audit"]
+    depends_on: ["fmt-check"]
+    threads: 2
     run: "cargo generate-lockfile && cargo audit"
-    timeout_seconds: 180
 
-  - name: "Evaluate Test Suite & Line Code Coverage (cargo llvm-cov)"
+  - id: coverage-check
+    name: "Evaluate Test Suite & Line Code Coverage (cargo llvm-cov)"
+    tags: ["k3"]
+    depends_on: ["clippy-check", "audit-check"]
+    threads: 2
     run: "cargo llvm-cov --summary-only"
-    timeout_seconds: 300
 
-  - name: "Verify Safe Execution & Undefined Behavior via Miri (cargo +nightly miri test)"
+  - id: miri-check
+    name: "Verify Safe Execution & Undefined Behavior via Miri (cargo +nightly miri test)"
+    tags: ["k3"]
+    depends_on: ["coverage-check"]
+    threads: 2
     run: "cargo +nightly miri test -p k3-core --lib"
-    timeout_seconds: 300
 
-  - name: "Execute Native Micro-Benchmarks (cargo bench)"
+  - id: bench-run
+    name: "Execute Native Micro-Benchmarks (cargo bench)"
+    tags: ["k3"]
+    depends_on: ["coverage-check"]
+    threads: 2
     run: "cargo bench --package k3-core || true"
-    timeout_seconds: 300

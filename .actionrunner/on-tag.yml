@@ -1,26 +1,40 @@
-version: "1"
+version: "2"
 name: "k3-core Release Pipeline"
 
 env:
   CARGO_TERM_COLOR: always
 
-steps:
-  - name: "Verify Rust Formatting (cargo fmt)"
+stages:
+  - id: fmt-check
+    name: "Verify Rust Formatting"
+    tags: ["fmt"]
+    threads: 2
     run: "cargo fmt --check"
-    timeout_seconds: 120
 
-  - name: "Verify Rust Linter & Clippy Rules (cargo clippy)"
+  - id: clippy-check
+    name: "Verify Rust Linter & Clippy Rules"
+    tags: ["clippy"]
+    depends_on: ["fmt-check"]
+    threads: 4
     run: "cargo clippy --all-targets -- -D warnings"
-    timeout_seconds: 300
 
-  - name: "Evaluate Test Suite & Line Code Coverage (cargo llvm-cov)"
+  - id: coverage-check
+    name: "Evaluate Test Suite & Line Code Coverage (cargo llvm-cov)"
+    tags: ["k3"]
+    depends_on: ["clippy-check"]
+    threads: 2
     run: "cargo llvm-cov --summary-only"
-    timeout_seconds: 300
 
-  - name: "Verify Safe Execution & Undefined Behavior via Miri (cargo +nightly miri test)"
+  - id: miri-check
+    name: "Verify Safe Execution & Undefined Behavior via Miri (cargo +nightly miri test)"
+    tags: ["k3"]
+    depends_on: ["coverage-check"]
+    threads: 2
     run: "cargo +nightly miri test -p k3-core --lib"
-    timeout_seconds: 300
 
-  - name: "Build Production Optimized Library"
+  - id: build-release
+    name: "Build Production Optimized Library"
+    tags: ["k3"]
+    depends_on: ["miri-check"]
+    threads: 4
     run: "cargo build --release --package k3-core"
-    timeout_seconds: 600
