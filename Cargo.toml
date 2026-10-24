@@ -8,8 +8,15 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/LMA1980/k3-core"
 
 [dependencies]
+arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
+fory = { workspace = true }
+fory-derive = { workspace = true }
+libc = { workspace = true }
+sendfd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+zerocopy = { workspace = true }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

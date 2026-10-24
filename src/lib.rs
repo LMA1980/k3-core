@@ -4,6 +4,7 @@
 pub mod coordination;
 pub mod error;
 pub mod gguf;
+pub mod ipc;
 pub mod profile;
 pub mod recipe;
 pub mod tensor;
@@ -15,6 +16,10 @@ pub use gguf::test_helpers;
 pub use gguf::{
     DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION_V3, GgufArray, GgufFile, GgufMetadataValueType,
     GgufValue, ModelMetadata, TensorDescriptor, align_up,
+};
+pub use ipc::{
+    ArenaHeader, ArenaOptions, ArenaSocketExt, IpcError, IpcMessage, KvBlockMeta, KvBlockTag,
+    OutputSlabHeader, SharedMemoryArena, StatusCode, TokenInputSlotHeader,
 };
 pub use profile::{
     ClusterPlacement, CoreAllocation, CostProfile, ExecutionCost, MemoryFootprintProfile,
