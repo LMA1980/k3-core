@@ -814,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_uds_frame_socketpair_roundtrip_with_and_without_fd() {
         let (fd_a, fd_b) = create_uds_socket_pair().expect("socketpair");
 

@@ -875,6 +875,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_creation_and_bounds() {
         let mut arena = SharedMemoryArena::create("test_bounds", 4096).expect("arena creation");
         assert!(arena.len() >= 4096);
@@ -907,6 +908,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_from_existing_fd_and_shared_mutation() {
         let mut arena1 = SharedMemoryArena::create("arena1", 4096).expect("arena1");
         {
@@ -924,6 +926,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_typed_header_and_meta_access() {
         let mut arena = SharedMemoryArena::create("typed_arena", 8192).expect("arena");
         {
@@ -949,6 +952,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_uds_fd_transfer_roundtrip() {
         let (s1, s2) = UnixStream::pair().expect("unix stream pair");
         let mut arena = SharedMemoryArena::create("uds_arena", 4096).expect("create arena");
@@ -968,6 +972,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_memlock_ceiling_enforcement() {
         // Exceeding configured ceiling returns InsufficientLockableMemory
         let options = ArenaOptions::new("ceiling_test", 4096)

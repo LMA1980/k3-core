@@ -381,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_shm_tensor_views_end_to_end() {
         use zerocopy::IntoBytes;
 
