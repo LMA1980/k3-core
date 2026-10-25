@@ -1,6 +1,7 @@
 //! `k3-core`: Foundational traits, zero-copy tensor views, single-prompt execution context,
 //! and structured diagnostic errors for the `SpacemiT` K3 AI runtime.
 
+pub mod affinity;
 pub mod coordination;
 pub mod error;
 pub mod gguf;
@@ -9,6 +10,13 @@ pub mod profile;
 pub mod recipe;
 pub mod tensor;
 
+pub use affinity::{
+    A100_CLUSTER_MASK, A100_DEFAULT_MAX_COMPUTE_THREADS, ActiveControlRotator,
+    ControlPlaneCapacityConfig, DEFAULT_A100_MAX_COMPUTE_CORES, DEFAULT_ACTIVE_CONTROL_MASK,
+    DEFAULT_MAX_A100_COMPUTE_CORES, DEFAULT_MAX_X100_COMPUTE_CORES, DEFAULT_SPARE_RECOVERY_MASK,
+    DEFAULT_X100_COMPUTE_CAP_MASK, DEFAULT_X100_MAX_COMPUTE_CORES, ResolvedControlCapacity,
+    X100_CLUSTER_MASK, X100_DEFAULT_MAX_COMPUTE_THREADS,
+};
 pub use coordination::CoordinationProfile;
 pub use error::K3Error;
 #[doc(hidden)]
