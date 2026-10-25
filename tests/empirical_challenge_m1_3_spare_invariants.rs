@@ -130,7 +130,9 @@ fn test_exhaustive_custom_spare_without_custom_active_default_2cores() {
     assert!(total_tested > 0);
     assert!(total_success > 0);
     assert!(total_rejected > 0);
-    println!("Exhaustive default config with custom spare tested {total_tested} combinations ({total_success} success, {total_rejected} rejected).");
+    println!(
+        "Exhaustive default config with custom spare tested {total_tested} combinations ({total_success} success, {total_rejected} rejected)."
+    );
 }
 
 /// Invariant Suite 2: Custom spare mask across ALL 256 online topologies with minimal active cores (1).
@@ -206,7 +208,9 @@ fn test_exhaustive_custom_spare_without_custom_active_minimal_1core() {
     assert!(total_tested > 0);
     assert!(total_success > 0);
     assert!(total_rejected > 0);
-    println!("Exhaustive minimal config with custom spare tested {total_tested} combinations ({total_success} success, {total_rejected} rejected).");
+    println!(
+        "Exhaustive minimal config with custom spare tested {total_tested} combinations ({total_success} success, {total_rejected} rejected)."
+    );
 }
 
 /// Invariant Suite 3: Multi-core custom spare mask without custom active mask across topologies.
@@ -241,7 +245,10 @@ fn test_multi_core_custom_spare_without_custom_active() {
     assert_eq!(res_degraded.spare_recovery_cores, vec![4, 5]);
     assert_eq!(res_degraded.active_control_cores, vec![2, 3]);
     assert_eq!(res_degraded.active_control_mask, 0x000C);
-    assert_eq!(res_degraded.active_control_mask & res_degraded.spare_recovery_mask, 0);
+    assert_eq!(
+        res_degraded.active_control_mask & res_degraded.spare_recovery_mask,
+        0
+    );
 
     // 3. Degraded topology where one of the spare cores is OFFLINE:
     // E.g., online = 0x00EF (core 4 is offline, core 5 is online)
@@ -253,7 +260,11 @@ fn test_multi_core_custom_spare_without_custom_active() {
     // spare takes cores 4, 5. Only core 0 remains for active. But cfg requests 2 active cores.
     let err_insuff = cfg.resolve_with_online_mask(0x0031).unwrap_err();
     assert_eq!(err_insuff.diagnostic_code(), "affinity_error");
-    assert!(err_insuff.to_string().contains("exceeds 1 available online X100 cores"));
+    assert!(
+        err_insuff
+            .to_string()
+            .contains("exceeds 1 available online X100 cores")
+    );
 }
 
 /// Invariant Suite 4: Adversarial rejection of invalid custom spare masks.
@@ -269,7 +280,10 @@ fn test_adversarial_custom_spare_rejections() {
     let cfg_out = ControlPlaneCapacityConfig::default().with_custom_spare_mask(1u64 << 20);
     let err_out = cfg_out.resolve_default().unwrap_err();
     assert_eq!(err_out.diagnostic_code(), "affinity_error");
-    assert!(err_out.to_string().contains("encroaches on Cluster 1") || err_out.to_string().contains("outside X100"));
+    assert!(
+        err_out.to_string().contains("encroaches on Cluster 1")
+            || err_out.to_string().contains("outside X100")
+    );
 
     // 3. Empty online mask with custom spare mask
     let cfg_empty = ControlPlaneCapacityConfig::default().with_custom_spare_mask(0x0020);

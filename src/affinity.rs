@@ -251,8 +251,7 @@ impl ControlPlaneCapacityConfig {
             (0, Vec::new())
         };
 
-        let (spare_mask, spare_cores) = if let Some(custom_mask) = self.custom_spare_recovery_mask
-        {
+        let (spare_mask, spare_cores) = if let Some(custom_mask) = self.custom_spare_recovery_mask {
             if (custom_mask & !X100_CLUSTER_MASK) != 0 {
                 return Err(K3Error::AffinityError {
                     requested_mask: custom_mask,
@@ -344,7 +343,10 @@ impl ControlPlaneCapacityConfig {
             // Case 4: Neither custom mask provided, full auto-allocation
             (false, false) => {
                 let online_count = valid_online.count_ones() as usize;
-                let Some(total_needed) = self.active_control_cores.checked_add(self.spare_recovery_cores) else {
+                let Some(total_needed) = self
+                    .active_control_cores
+                    .checked_add(self.spare_recovery_cores)
+                else {
                     return Err(K3Error::AffinityError {
                         requested_mask: valid_online,
                         requested_threads: usize::MAX,
@@ -400,7 +402,8 @@ impl ControlPlaneCapacityConfig {
             return Err(K3Error::AffinityError {
                 requested_mask: resolved_active_mask,
                 requested_threads: resolved_active_cores.len(),
-                reason: "control plane requires at least 1 active control core (resolved 0)".to_string(),
+                reason: "control plane requires at least 1 active control core (resolved 0)"
+                    .to_string(),
             });
         }
 
@@ -884,7 +887,10 @@ mod tests {
         let err = cfg.resolve_default().unwrap_err();
 
         assert_eq!(err.diagnostic_code(), "affinity_error");
-        assert!(err.to_string().contains("active control mask cannot be zero"));
+        assert!(
+            err.to_string()
+                .contains("active control mask cannot be zero")
+        );
     }
 
     #[test]
@@ -942,9 +948,10 @@ mod tests {
         let err = cfg.resolve_default().unwrap_err();
 
         assert_eq!(err.diagnostic_code(), "affinity_error");
-        assert!(err
-            .to_string()
-            .contains("overlaps dedicated active control mask"));
+        assert!(
+            err.to_string()
+                .contains("overlaps dedicated active control mask")
+        );
     }
 
     #[test]
@@ -973,9 +980,10 @@ mod tests {
         let err = cfg.resolve_with_online_mask(0x0000).unwrap_err();
 
         assert_eq!(err.diagnostic_code(), "affinity_error");
-        assert!(err
-            .to_string()
-            .contains("no online X100 general-purpose cores available"));
+        assert!(
+            err.to_string()
+                .contains("no online X100 general-purpose cores available")
+        );
     }
 
     #[test]
@@ -1046,8 +1054,7 @@ mod tests {
 
     #[test]
     fn test_custom_spare_mask_without_custom_active_allocates_active_cores() {
-        let cfg = ControlPlaneCapacityConfig::default()
-            .with_custom_spare_mask(0x0020);
+        let cfg = ControlPlaneCapacityConfig::default().with_custom_spare_mask(0x0020);
         let resolved = cfg.resolve_default().expect("valid capacity");
 
         assert_eq!(resolved.active_control_mask, 0x00C0);
@@ -1061,12 +1068,14 @@ mod tests {
 
     #[test]
     fn test_custom_spare_mask_exhausting_active_cores_rejected() {
-        let cfg = ControlPlaneCapacityConfig::minimal()
-            .with_custom_spare_mask(0x0020);
+        let cfg = ControlPlaneCapacityConfig::minimal().with_custom_spare_mask(0x0020);
         let err = cfg.resolve_with_online_mask(0x0020).unwrap_err();
 
         assert_eq!(err.diagnostic_code(), "affinity_error");
-        assert!(err.to_string().contains("exceeds 0 available online X100 cores"));
+        assert!(
+            err.to_string()
+                .contains("exceeds 0 available online X100 cores")
+        );
     }
 
     #[test]
@@ -1081,8 +1090,7 @@ mod tests {
 
     #[test]
     fn test_reject_custom_compute_cap_specifies_offline_core() {
-        let cfg = ControlPlaneCapacityConfig::minimal()
-            .with_custom_compute_cap_mask(0x000F);
+        let cfg = ControlPlaneCapacityConfig::minimal().with_custom_compute_cap_mask(0x000F);
         let err = cfg.resolve_with_online_mask(0x00C0).unwrap_err();
         assert_eq!(err.diagnostic_code(), "affinity_error");
         assert!(err.to_string().contains("specifies offline cores"));
@@ -1090,7 +1098,9 @@ mod tests {
 
     #[test]
     fn test_reject_compute_mask_outside_soc_range() {
-        let res = ControlPlaneCapacityConfig::default().resolve_default().unwrap();
+        let res = ControlPlaneCapacityConfig::default()
+            .resolve_default()
+            .unwrap();
         let err = res.validate_compute_mask(0x0001_0000).unwrap_err();
         assert_eq!(err.diagnostic_code(), "affinity_error");
         assert!(err.to_string().contains("outside valid 16-core SoC mask"));

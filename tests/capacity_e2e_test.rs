@@ -141,7 +141,9 @@ fn test_tier1_f06_constrained_topology_resolution() {
     let cfg = ControlPlaneCapacityConfig::default();
 
     // 1. 4-core online (0x000F): active cores 2, 3 (0x000C), spare core 1 (0x0002), compute cap cores 0, 1 (0x0003)
-    let res4 = cfg.resolve_with_online_mask(0x000F).expect("resolve 4-core");
+    let res4 = cfg
+        .resolve_with_online_mask(0x000F)
+        .expect("resolve 4-core");
     assert_eq!(res4.active_control_mask, 0x000C);
     assert_eq!(res4.active_control_cores, vec![2, 3]);
     assert_eq!(res4.spare_recovery_mask, 0x0002);
@@ -150,21 +152,27 @@ fn test_tier1_f06_constrained_topology_resolution() {
 
     // 2. 4-core minimal config: active core 3 (0x0008), 0 spare, compute cap cores 0..2 (0x0007, max 3)
     let min = ControlPlaneCapacityConfig::minimal();
-    let res4_min = min.resolve_with_online_mask(0x000F).expect("resolve 4-core minimal");
+    let res4_min = min
+        .resolve_with_online_mask(0x000F)
+        .expect("resolve 4-core minimal");
     assert_eq!(res4_min.active_control_mask, 0x0008);
     assert_eq!(res4_min.spare_recovery_mask, 0x0000);
     assert_eq!(res4_min.x100_compute_cap_mask, 0x0007);
     assert_eq!(res4_min.x100_max_compute_cores, 3);
 
     // 3. 2-core minimal config (0x0003): active core 1 (0x0002), 0 spare, compute cap core 0 (0x0001)
-    let res2 = min.resolve_with_online_mask(0x0003).expect("resolve 2-core");
+    let res2 = min
+        .resolve_with_online_mask(0x0003)
+        .expect("resolve 2-core");
     assert_eq!(res2.active_control_mask, 0x0002);
     assert_eq!(res2.spare_recovery_mask, 0x0000);
     assert_eq!(res2.x100_compute_cap_mask, 0x0001);
     assert_eq!(res2.x100_max_compute_cores, 1);
 
     // 4. 1-core minimal config (0x0001): active core 0 (0x0001), 0 spare, compute cap 0x0000
-    let res1 = min.resolve_with_online_mask(0x0001).expect("resolve 1-core");
+    let res1 = min
+        .resolve_with_online_mask(0x0001)
+        .expect("resolve 1-core");
     assert_eq!(res1.active_control_mask, 0x0001);
     assert_eq!(res1.spare_recovery_mask, 0x0000);
     assert_eq!(res1.x100_compute_cap_mask, 0x0000);
@@ -186,7 +194,10 @@ fn test_tier1_f07_lendable_spare_capacity_semantics() {
 
     // 2. Core 5 is simultaneously in the X100 compute cap mask (lendable)
     assert!(res.is_x100_compute_allowed(5));
-    assert_eq!(res.spare_recovery_mask & res.x100_compute_cap_mask, res.spare_recovery_mask);
+    assert_eq!(
+        res.spare_recovery_mask & res.x100_compute_cap_mask,
+        res.spare_recovery_mask
+    );
 
     // 3. Active control cores 6 and 7 are strictly NOT allowed for compute
     assert!(!res.is_x100_compute_allowed(6));
@@ -216,7 +227,9 @@ fn test_tier1_f08_a100_compute_capacity_invariant() {
     // 4. A100 cluster mask is disjoint from X100 compute cap mask
     assert_eq!(A100_CLUSTER_MASK & res.x100_compute_cap_mask, 0);
     // 5. Changing X100 capacity settings does not alter A100 compute capacity
-    let min_res = ControlPlaneCapacityConfig::minimal().resolve_default().unwrap();
+    let min_res = ControlPlaneCapacityConfig::minimal()
+        .resolve_default()
+        .unwrap();
     assert_eq!(min_res.a100_max_compute_cores, 8);
 }
 
@@ -238,7 +251,9 @@ fn test_tier1_f09_deterministic_active_control_round_robin() {
     assert_eq!(res.next_active_control_core(), 7);
 
     // 3. Minimal 1-core resolution cycles purely on single core 7
-    let min_res = ControlPlaneCapacityConfig::minimal().resolve_default().unwrap();
+    let min_res = ControlPlaneCapacityConfig::minimal()
+        .resolve_default()
+        .unwrap();
     assert_eq!(min_res.next_active_control_core(), 7);
     assert_eq!(min_res.next_active_control_core(), 7);
     assert_eq!(min_res.next_active_control_core(), 7);
@@ -264,7 +279,9 @@ fn test_tier1_f10_dedicated_spare_recovery_core_assignment() {
     assert!(!res.is_spare_recovery_core(6));
     assert!(!res.is_spare_recovery_core(7));
     // 4. Minimal configuration returns None for spare recovery core
-    let min_res = ControlPlaneCapacityConfig::minimal().resolve_default().unwrap();
+    let min_res = ControlPlaneCapacityConfig::minimal()
+        .resolve_default()
+        .unwrap();
     assert_eq!(min_res.spare_recovery_core(), None);
     // 5. Config with custom spare mask 0x0010 returns Some(4)
     let custom_cfg = ControlPlaneCapacityConfig::default()
@@ -305,16 +322,25 @@ fn test_tier1_f12_validation_outside_x100_rejection() {
     let cfg_a100_act = ControlPlaneCapacityConfig::default().with_custom_active_mask(0x0100);
     let res1 = cfg_a100_act.resolve_default();
     assert!(res1.is_err());
-    assert!(res1.unwrap_err().to_string().contains("encroaches on Cluster 1 (A100"));
+    assert!(
+        res1.unwrap_err()
+            .to_string()
+            .contains("encroaches on Cluster 1 (A100")
+    );
 
     // 2. Custom spare mask with bit 9 (0x0200 on A100) is rejected
     let cfg_a100_spr = ControlPlaneCapacityConfig::default().with_custom_spare_mask(0x0200);
     let res2 = cfg_a100_spr.resolve_default();
     assert!(res2.is_err());
-    assert!(res2.unwrap_err().to_string().contains("encroaches on Cluster 1 (A100"));
+    assert!(
+        res2.unwrap_err()
+            .to_string()
+            .contains("encroaches on Cluster 1 (A100")
+    );
 
     // 3. Full A100 mask (0xFF00) as active control mask is rejected
-    let cfg_full_a100 = ControlPlaneCapacityConfig::default().with_custom_active_mask(A100_CLUSTER_MASK);
+    let cfg_full_a100 =
+        ControlPlaneCapacityConfig::default().with_custom_active_mask(A100_CLUSTER_MASK);
     assert!(cfg_full_a100.resolve_default().is_err());
 
     // 4. Bit 16 (0x10000 outside 16-core SoC) is rejected
@@ -370,7 +396,10 @@ fn test_tier1_f14_validation_compute_cap_vs_active_overlap_rejection() {
     // 2. Error message indicates compute cap overlaps active control mask
     let err = res.unwrap_err();
     assert!(err.to_string().contains("compute cap mask"));
-    assert!(err.to_string().contains("overlaps dedicated active control mask"));
+    assert!(
+        err.to_string()
+            .contains("overlaps dedicated active control mask")
+    );
 
     // 3. Compute cap covering entire X100 (0x00FF) is rejected
     let cfg_all = ControlPlaneCapacityConfig::default().with_custom_compute_cap_mask(0x00FF);
@@ -388,7 +417,10 @@ fn test_tier1_f14_validation_compute_cap_vs_active_overlap_rejection() {
         .with_custom_spare_mask(0x0020)
         .with_custom_compute_cap_mask(0x003F);
     let resolved = cfg_lendable.resolve_default().expect("valid lendable");
-    assert_eq!(resolved.x100_compute_cap_mask & resolved.spare_recovery_mask, 0x0020);
+    assert_eq!(
+        resolved.x100_compute_cap_mask & resolved.spare_recovery_mask,
+        0x0020
+    );
 }
 
 #[test]
@@ -408,7 +440,11 @@ fn test_tier1_f15_validation_online_core_exhaustion_rejection() {
     let cfg_default = ControlPlaneCapacityConfig::default();
     let res2 = cfg_default.resolve_with_online_mask(0x0003);
     assert!(res2.is_err());
-    assert!(res2.unwrap_err().to_string().contains("exceeds 2 online X100 cores"));
+    assert!(
+        res2.unwrap_err()
+            .to_string()
+            .contains("exceeds 2 online X100 cores")
+    );
 
     // 4. Requesting exact count (2 active + 2 spare = 4 on 4 online cores) is accepted
     let cfg_exact = ControlPlaneCapacityConfig::default()
@@ -433,7 +469,10 @@ fn test_tier2_boundary_empty_online_mask_rejection() {
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert_eq!(err.diagnostic_code(), "affinity_error");
-    assert!(err.to_string().contains("no online X100 general-purpose cores available"));
+    assert!(
+        err.to_string()
+            .contains("no online X100 general-purpose cores available")
+    );
 }
 
 #[test]
@@ -442,7 +481,11 @@ fn test_tier2_boundary_a100_only_online_rejection() {
     // 2. Online mask = 0xFF00 (only A100 cores online, 0 cores online in X100)
     let res = cfg.resolve_with_online_mask(A100_CLUSTER_MASK);
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("no online X100 general-purpose cores available"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("no online X100 general-purpose cores available")
+    );
 }
 
 #[test]
@@ -451,14 +494,20 @@ fn test_tier2_boundary_single_online_core_with_default_config_rejection() {
     // 3. Online mask = 0x0001 (1 core online)
     let res = cfg.resolve_with_online_mask(0x0001);
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("exceeds 1 online X100 cores"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("exceeds 1 online X100 cores")
+    );
 }
 
 #[test]
 fn test_tier2_boundary_non_contiguous_online_masks() {
     // 4. Alternating even cores online: 0x0055 = cores 0, 2, 4, 6 online (4 cores)
     let cfg = ControlPlaneCapacityConfig::default(); // 2 active, 1 spare
-    let res = cfg.resolve_with_online_mask(0x0055).expect("resolve non-contiguous even");
+    let res = cfg
+        .resolve_with_online_mask(0x0055)
+        .expect("resolve non-contiguous even");
     // Highest online cores for active control: 6, 4 -> mask (1<<6) | (1<<4) = 0x0040 | 0x0010 = 0x0050
     assert_eq!(res.active_control_mask, 0x0050);
     assert_eq!(res.active_control_cores, vec![4, 6]);
@@ -470,7 +519,9 @@ fn test_tier2_boundary_non_contiguous_online_masks() {
     assert_eq!(res.x100_max_compute_cores, 2);
 
     // 5. Alternating odd cores online: 0x00AA = cores 1, 3, 5, 7 online (4 cores)
-    let res_odd = cfg.resolve_with_online_mask(0x00AA).expect("resolve non-contiguous odd");
+    let res_odd = cfg
+        .resolve_with_online_mask(0x00AA)
+        .expect("resolve non-contiguous odd");
     // Highest online cores: 7, 5 -> mask 0x0080 | 0x0020 = 0x00A0
     assert_eq!(res_odd.active_control_mask, 0x00A0);
     assert_eq!(res_odd.active_control_cores, vec![5, 7]);
@@ -487,7 +538,8 @@ fn test_tier2_boundary_atomic_round_robin_counter_overflow() {
     let res = cfg.resolve_default().expect("resolve default");
 
     // Pre-set round-robin counter near usize::MAX
-    res.round_robin_counter.store(usize::MAX - 1, Ordering::SeqCst);
+    res.round_robin_counter
+        .store(usize::MAX - 1, Ordering::SeqCst);
 
     // Call 4 times, ensuring safe wrapping over usize::MAX without panic or arithmetic overflow
     let c1 = res.next_active_control_core(); // usize::MAX - 1
@@ -551,7 +603,12 @@ fn test_tier2_boundary_offline_core_in_custom_mask_rejection() {
         .with_custom_spare_mask(0x0020);
     let res_spr = cfg_spr.resolve_with_online_mask(0x00DF);
     assert!(res_spr.is_err());
-    assert!(res_spr.unwrap_err().to_string().contains("specifies offline cores"));
+    assert!(
+        res_spr
+            .unwrap_err()
+            .to_string()
+            .contains("specifies offline cores")
+    );
 }
 
 // ============================================================================
@@ -745,7 +802,9 @@ fn test_tier4_scenario3_degraded_board_mode_partial_cores() {
 
     // Resolver automatically downscales to 2 active cores (2, 3), 1 spare core (1), compute cap cores 0, 1
     let cfg = ControlPlaneCapacityConfig::default();
-    let res = cfg.resolve_with_online_mask(online_mask).expect("degraded 4-core");
+    let res = cfg
+        .resolve_with_online_mask(online_mask)
+        .expect("degraded 4-core");
 
     assert_eq!(res.active_control_mask, 0x000C);
     assert_eq!(res.spare_recovery_mask, 0x0002);
@@ -784,7 +843,9 @@ fn test_tier4_scenario4_high_throughput_tokenization_load_balancing() {
 fn test_tier4_scenario5_single_core_disaster_recovery_mode() {
     // Scenario 5: Emergency single-core recovery boot mode (only core 0 online)
     let min_cfg = ControlPlaneCapacityConfig::minimal();
-    let res = min_cfg.resolve_with_online_mask(0x0001).expect("disaster mode");
+    let res = min_cfg
+        .resolve_with_online_mask(0x0001)
+        .expect("disaster mode");
 
     // Core 0 reserved for active control plane
     assert_eq!(res.active_control_mask, 0x0001);

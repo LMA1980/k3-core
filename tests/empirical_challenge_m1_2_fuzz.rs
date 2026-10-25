@@ -122,8 +122,16 @@ fn test_exhaustive_256_online_masks_default_config() {
             assert_ne!(c0, c1);
 
             // Invariant 9: Compute mask validation
-            assert!(resolved.validate_compute_mask(resolved.x100_compute_cap_mask).is_ok());
-            assert!(resolved.validate_compute_mask(resolved.active_control_mask).is_err());
+            assert!(
+                resolved
+                    .validate_compute_mask(resolved.x100_compute_cap_mask)
+                    .is_ok()
+            );
+            assert!(
+                resolved
+                    .validate_compute_mask(resolved.active_control_mask)
+                    .is_err()
+            );
         }
     }
 }
@@ -147,10 +155,7 @@ fn test_exhaustive_256_online_masks_minimal_config() {
             }
         } else {
             let resolved = res.unwrap_or_else(|e| {
-                panic!(
-                    "minimal config failed on mask 0x{:02X}: {:?}",
-                    mask_val, e
-                )
+                panic!("minimal config failed on mask 0x{:02X}: {:?}", mask_val, e)
             });
 
             // Invariant 1: Exactly 1 active core and 0 spare cores
@@ -167,10 +172,7 @@ fn test_exhaustive_256_online_masks_minimal_config() {
             );
 
             // Invariant 3: Compute cores count
-            assert_eq!(
-                resolved.x100_max_compute_cores,
-                online_count - 1
-            );
+            assert_eq!(resolved.x100_max_compute_cores, online_count - 1);
 
             // Invariant 4: Round-robin returns the sole active core
             let sole_active = resolved.active_control_cores[0];
@@ -261,11 +263,13 @@ fn test_demonstrate_bug_zero_active_cores_resolved_and_panic() {
 
 #[test]
 fn test_regression_zero_active_cores_resolved_and_panic() {
-    let cfg = ControlPlaneCapacityConfig::default()
-        .with_custom_spare_mask(0x0020);
+    let cfg = ControlPlaneCapacityConfig::default().with_custom_spare_mask(0x0020);
 
     let res = cfg.resolve_default();
-    assert!(res.is_ok(), "resolve_default should succeed with auto-allocated active cores");
+    assert!(
+        res.is_ok(),
+        "resolve_default should succeed with auto-allocated active cores"
+    );
 
     let resolved = res.unwrap();
     assert_eq!(resolved.active_control_mask, 0x00C0);
@@ -289,14 +293,20 @@ fn test_regression_zero_active_cores_resolved_and_panic() {
     assert_eq!(rot.next_core(), 7);
 
     // When custom spare mask exhausts available online cores, resolution returns Err(K3Error::AffinityError)
-    let constrained = ControlPlaneCapacityConfig::minimal()
-        .with_custom_spare_mask(0x0020);
+    let constrained = ControlPlaneCapacityConfig::minimal().with_custom_spare_mask(0x0020);
     let err = constrained.resolve_with_online_mask(0x0020).unwrap_err();
     match err {
-        K3Error::AffinityError { requested_mask, requested_threads, reason } => {
+        K3Error::AffinityError {
+            requested_mask,
+            requested_threads,
+            reason,
+        } => {
             assert_eq!(requested_mask, 0x0020);
             assert_eq!(requested_threads, 1);
-            assert!(reason.contains("available online X100 cores") || reason.contains("active control core"));
+            assert!(
+                reason.contains("available online X100 cores")
+                    || reason.contains("active control core")
+            );
         }
         other => panic!("expected AffinityError, got {:?}", other),
     }
@@ -314,15 +324,24 @@ fn test_regression_integer_overflow_returns_affinity_error() {
         .with_active_cores(usize::MAX)
         .with_spare_cores(1);
 
-    let panic_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        cfg.resolve_default()
-    }));
-    assert!(panic_res.is_ok(), "resolve_default must not panic on integer overflow");
+    let panic_res =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cfg.resolve_default()));
+    assert!(
+        panic_res.is_ok(),
+        "resolve_default must not panic on integer overflow"
+    );
 
     let res = panic_res.unwrap();
-    assert!(res.is_err(), "resolve_default must return structured error on integer overflow");
+    assert!(
+        res.is_err(),
+        "resolve_default must return structured error on integer overflow"
+    );
     match res.unwrap_err() {
-        K3Error::AffinityError { requested_threads, reason, .. } => {
+        K3Error::AffinityError {
+            requested_threads,
+            reason,
+            ..
+        } => {
             assert_eq!(requested_threads, usize::MAX);
             assert!(reason.contains("overflow"));
         }
@@ -343,9 +362,16 @@ fn test_regression_custom_compute_cap_rejects_offline_cores() {
         .with_custom_compute_cap_mask(0x000F); // cores 0..3 are offline
 
     let res = cfg.resolve_with_online_mask(0x00C0);
-    assert!(res.is_err(), "custom compute cap specifying offline cores must be rejected");
+    assert!(
+        res.is_err(),
+        "custom compute cap specifying offline cores must be rejected"
+    );
     match res.unwrap_err() {
-        K3Error::AffinityError { requested_mask, requested_threads, reason } => {
+        K3Error::AffinityError {
+            requested_mask,
+            requested_threads,
+            reason,
+        } => {
             assert_eq!(requested_mask, 0x000F);
             assert_eq!(requested_threads, 4);
             assert!(reason.contains("specifies offline cores"));
@@ -388,8 +414,12 @@ fn test_upper_bit_masking_cluster_isolation() {
     // 0x01FF has 0x00FF on X100 and bit 8 on A100.
     // The resolver must mask online_mask with X100_CLUSTER_MASK (0x00FF),
     // producing the exact same resolution as 0x00FF.
-    let res_mixed = cfg.resolve_with_online_mask(0x01FF).expect("resolve 0x01FF");
-    let res_pure = cfg.resolve_with_online_mask(0x00FF).expect("resolve 0x00FF");
+    let res_mixed = cfg
+        .resolve_with_online_mask(0x01FF)
+        .expect("resolve 0x01FF");
+    let res_pure = cfg
+        .resolve_with_online_mask(0x00FF)
+        .expect("resolve 0x00FF");
 
     assert_eq!(res_mixed, res_pure);
     assert_eq!(res_mixed.active_control_mask, 0x00C0);
@@ -403,7 +433,8 @@ fn test_round_robin_counter_wrapping_at_usize_max() {
     let cfg = ControlPlaneCapacityConfig::default();
     let res = cfg.resolve_default().expect("resolve default");
 
-    res.round_robin_counter.store(usize::MAX - 1, std::sync::atomic::Ordering::Relaxed);
+    res.round_robin_counter
+        .store(usize::MAX - 1, std::sync::atomic::Ordering::Relaxed);
 
     let c0 = res.next_active_control_core();
     let c1 = res.next_active_control_core();

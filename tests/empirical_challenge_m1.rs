@@ -397,7 +397,9 @@ fn test_property_combinatorial_grid_search_all_capacity_dimensions() {
 
     assert!(total_successes > 0);
     assert!(total_failures > 0);
-    println!("Combinatorial grid search complete: {total_successes} valid configurations, {total_failures} rejected configurations.");
+    println!(
+        "Combinatorial grid search complete: {total_successes} valid configurations, {total_failures} rejected configurations."
+    );
 }
 
 /// Challenge 8: Adversarial Test — Custom spare mask without custom active mask.
@@ -406,8 +408,7 @@ fn test_property_combinatorial_grid_search_all_capacity_dimensions() {
 /// Per R3, resolving with 0 active control cores must be rejected or active control cores must be populated.
 #[test]
 fn test_adversarial_custom_spare_without_custom_active_mask() {
-    let cfg = ControlPlaneCapacityConfig::default()
-        .with_custom_spare_mask(0x0020);
+    let cfg = ControlPlaneCapacityConfig::default().with_custom_spare_mask(0x0020);
 
     let res = cfg.resolve_default();
     match res {
@@ -465,8 +466,7 @@ fn test_adversarial_custom_compute_cap_specifying_offline_cores() {
     // Only cores 6 and 7 are online
     let online_mask = 0x00C0;
     // Request compute cap on cores 0..3 (which are completely offline)
-    let cfg = ControlPlaneCapacityConfig::minimal()
-        .with_custom_compute_cap_mask(0x000F);
+    let cfg = ControlPlaneCapacityConfig::minimal().with_custom_compute_cap_mask(0x000F);
 
     let res = cfg.resolve_with_online_mask(online_mask);
     match res {
@@ -487,4 +487,3 @@ fn test_adversarial_custom_compute_cap_specifying_offline_cores() {
         Err(other) => panic!("Unexpected error type: {other:?}"),
     }
 }
-

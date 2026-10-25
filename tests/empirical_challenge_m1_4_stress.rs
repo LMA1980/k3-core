@@ -14,7 +14,7 @@
     unused_imports
 )]
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -44,7 +44,12 @@ fn test_stress_arithmetic_overflow_extremes() {
 
         // Test on standard online mask 0x00FF
         let res = catch_unwind(AssertUnwindSafe(|| cfg.resolve_default()));
-        assert!(res.is_ok(), "resolve_default panicked on active={}, spare={}", active, spare);
+        assert!(
+            res.is_ok(),
+            "resolve_default panicked on active={}, spare={}",
+            active,
+            spare
+        );
         let outcome = res.unwrap();
         assert!(
             outcome.is_err(),
@@ -54,7 +59,11 @@ fn test_stress_arithmetic_overflow_extremes() {
             outcome
         );
         match outcome.unwrap_err() {
-            K3Error::AffinityError { requested_threads, reason, .. } => {
+            K3Error::AffinityError {
+                requested_threads,
+                reason,
+                ..
+            } => {
                 if active == 0 {
                     assert_eq!(requested_threads, 0);
                     assert!(reason.contains("at least 1 active control core"));
@@ -73,12 +82,22 @@ fn test_stress_arithmetic_overflow_extremes() {
 
         // Test on degraded online mask 0x0001
         let res_deg = catch_unwind(AssertUnwindSafe(|| cfg.resolve_with_online_mask(0x0001)));
-        assert!(res_deg.is_ok(), "resolve_with_online_mask(0x0001) panicked on active={}, spare={}", active, spare);
+        assert!(
+            res_deg.is_ok(),
+            "resolve_with_online_mask(0x0001) panicked on active={}, spare={}",
+            active,
+            spare
+        );
         assert!(res_deg.unwrap().is_err());
 
         // Test on empty online mask 0x0000
         let res_empty = catch_unwind(AssertUnwindSafe(|| cfg.resolve_with_online_mask(0x0000)));
-        assert!(res_empty.is_ok(), "resolve_with_online_mask(0x0000) panicked on active={}, spare={}", active, spare);
+        assert!(
+            res_empty.is_ok(),
+            "resolve_with_online_mask(0x0000) panicked on active={}, spare={}",
+            active,
+            spare
+        );
         assert!(res_empty.unwrap().is_err());
     }
 }
@@ -102,11 +121,22 @@ fn test_stress_arithmetic_overflow_with_custom_spare_mask() {
         let res = catch_unwind(AssertUnwindSafe(|| cfg.resolve_default()));
         assert!(res.is_ok(), "panicked with custom spare and active={}", act);
         let outcome = res.unwrap();
-        assert!(outcome.is_err(), "expected error for active={}, got {:?}", act, outcome);
+        assert!(
+            outcome.is_err(),
+            "expected error for active={}, got {:?}",
+            act,
+            outcome
+        );
         match outcome.unwrap_err() {
-            K3Error::AffinityError { requested_threads, reason, .. } => {
+            K3Error::AffinityError {
+                requested_threads,
+                reason,
+                ..
+            } => {
                 assert_eq!(requested_threads, act);
-                assert!(reason.contains("exceeds") && reason.contains("available online X100 cores"));
+                assert!(
+                    reason.contains("exceeds") && reason.contains("available online X100 cores")
+                );
             }
             other => panic!("expected AffinityError, got {:?}", other),
         }
@@ -123,9 +153,17 @@ fn test_stress_offline_core_rejection_all_8_single_bits() {
         // 1. Custom active mask containing the offline core
         let cfg_act = ControlPlaneCapacityConfig::default().with_custom_active_mask(offline_bit);
         let res_act = cfg_act.resolve_with_online_mask(online_mask);
-        assert!(res_act.is_err(), "core {} offline was accepted in active mask", core);
+        assert!(
+            res_act.is_err(),
+            "core {} offline was accepted in active mask",
+            core
+        );
         match res_act.unwrap_err() {
-            K3Error::AffinityError { requested_mask, reason, .. } => {
+            K3Error::AffinityError {
+                requested_mask,
+                reason,
+                ..
+            } => {
                 assert_eq!(requested_mask, offline_bit);
                 assert!(reason.contains("specifies offline cores"));
             }
@@ -137,9 +175,17 @@ fn test_stress_offline_core_rejection_all_8_single_bits() {
             .with_custom_active_mask(if core == 7 { 0x0040 } else { 0x0080 })
             .with_custom_spare_mask(offline_bit);
         let res_spr = cfg_spr.resolve_with_online_mask(online_mask);
-        assert!(res_spr.is_err(), "core {} offline was accepted in spare mask", core);
+        assert!(
+            res_spr.is_err(),
+            "core {} offline was accepted in spare mask",
+            core
+        );
         match res_spr.unwrap_err() {
-            K3Error::AffinityError { requested_mask, reason, .. } => {
+            K3Error::AffinityError {
+                requested_mask,
+                reason,
+                ..
+            } => {
                 assert_eq!(requested_mask, offline_bit);
                 assert!(reason.contains("specifies offline cores"));
             }
@@ -152,9 +198,17 @@ fn test_stress_offline_core_rejection_all_8_single_bits() {
             .with_custom_active_mask(1u64 << active_core)
             .with_custom_compute_cap_mask(offline_bit);
         let res_cap = cfg_cap.resolve_with_online_mask(online_mask);
-        assert!(res_cap.is_err(), "core {} offline was accepted in compute cap mask", core);
+        assert!(
+            res_cap.is_err(),
+            "core {} offline was accepted in compute cap mask",
+            core
+        );
         match res_cap.unwrap_err() {
-            K3Error::AffinityError { requested_mask, reason, .. } => {
+            K3Error::AffinityError {
+                requested_mask,
+                reason,
+                ..
+            } => {
                 assert_eq!(requested_mask, offline_bit);
                 assert!(reason.contains("specifies offline cores"));
             }
@@ -176,22 +230,30 @@ fn test_stress_offline_cores_combinatorial_patterns() {
 
     for &(online_mask, offline_mask) in &degraded_topologies {
         // Requesting compute cap specifying all offline cores
-        let cfg = ControlPlaneCapacityConfig::minimal()
-            .with_custom_compute_cap_mask(offline_mask);
+        let cfg = ControlPlaneCapacityConfig::minimal().with_custom_compute_cap_mask(offline_mask);
         let res = cfg.resolve_with_online_mask(online_mask);
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("specifies offline cores"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("specifies offline cores")
+        );
 
         // Requesting compute cap specifying 1 online core + 1 offline core
         let lowest_online = 1u64 << online_mask.trailing_zeros();
         let lowest_offline = 1u64 << offline_mask.trailing_zeros();
         let mixed_cap = lowest_online | lowest_offline;
 
-        let cfg_mixed = ControlPlaneCapacityConfig::minimal()
-            .with_custom_compute_cap_mask(mixed_cap);
+        let cfg_mixed =
+            ControlPlaneCapacityConfig::minimal().with_custom_compute_cap_mask(mixed_cap);
         let res_mixed = cfg_mixed.resolve_with_online_mask(online_mask);
         assert!(res_mixed.is_err());
-        assert!(res_mixed.unwrap_err().to_string().contains("specifies offline cores"));
+        assert!(
+            res_mixed
+                .unwrap_err()
+                .to_string()
+                .contains("specifies offline cores")
+        );
     }
 }
 
@@ -226,7 +288,11 @@ fn test_stress_validate_compute_mask_boundaries() {
     ];
     for &oob in &oob_masks {
         let err = res.validate_compute_mask(oob);
-        assert!(err.is_err(), "validate_compute_mask accepted out of bounds mask 0x{:X}", oob);
+        assert!(
+            err.is_err(),
+            "validate_compute_mask accepted out of bounds mask 0x{:X}",
+            oob
+        );
         let msg = err.unwrap_err().to_string();
         assert!(msg.contains("outside valid 16-core SoC mask") || msg.contains("invalid cores"));
     }
@@ -238,7 +304,8 @@ fn test_stress_concurrent_rotator_near_usize_max_wrap() {
     let res = Arc::new(cfg.resolve_default().expect("resolve default"));
 
     // Set counter near usize::MAX to provoke wraparound under high concurrency
-    res.round_robin_counter.store(usize::MAX - 50_000, Ordering::SeqCst);
+    res.round_robin_counter
+        .store(usize::MAX - 50_000, Ordering::SeqCst);
 
     let threads: Vec<_> = (0..16)
         .map(|_| {
@@ -262,14 +329,16 @@ fn test_stress_fuzz_random_configurations_and_invariants() {
     // Deterministic pseudo-random sequence (Linear Congruential Generator)
     let mut state = 0xDEAD_BEEF_u64;
     let mut next_u64 = || {
-        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         state
     };
 
     for _ in 0..5_000 {
         let active = (next_u64() % 12) as usize; // 0..11
-        let spare = (next_u64() % 12) as usize;  // 0..11
-        let online_mask = next_u64() & 0x03FF;   // 10-bit mask (some in X100, some in A100)
+        let spare = (next_u64() % 12) as usize; // 0..11
+        let online_mask = next_u64() & 0x03FF; // 10-bit mask (some in X100, some in A100)
 
         let mut cfg = ControlPlaneCapacityConfig::new()
             .with_active_cores(active)
@@ -298,7 +367,10 @@ fn test_stress_fuzz_random_configurations_and_invariants() {
         if let Ok(Ok(resolved)) = res {
             let valid_online = online_mask & X100_CLUSTER_MASK;
             // Assert all fundamental invariants
-            assert!(!resolved.active_control_cores.is_empty(), "active cores must not be empty");
+            assert!(
+                !resolved.active_control_cores.is_empty(),
+                "active cores must not be empty"
+            );
             assert_ne!(resolved.active_control_mask, 0, "active mask must not be 0");
             assert_eq!(
                 resolved.active_control_mask & resolved.spare_recovery_mask,
@@ -329,7 +401,10 @@ fn test_stress_fuzz_random_configurations_and_invariants() {
             // Test rotator methods do not panic
             let next_c = resolved.next_active_control_core();
             assert!(resolved.is_active_control_core(next_c));
-            assert_eq!(resolved.round_robin_active_core(0), resolved.active_control_cores[0]);
+            assert_eq!(
+                resolved.round_robin_active_core(0),
+                resolved.active_control_cores[0]
+            );
         }
     }
 }
