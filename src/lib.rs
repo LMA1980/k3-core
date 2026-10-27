@@ -30,8 +30,11 @@ pub use ipc::{
     OutputSlabHeader, SharedMemoryArena, StatusCode, TokenInputSlotHeader,
 };
 pub use profile::{
-    ClusterPlacement, CoreAllocation, CostProfile, ExecutionCost, MemoryFootprintProfile,
-    ModelIdentity, QuantizationInfo, TuningAdvisory,
+    CONSERVATIVE_DEFAULT_A100_CORES, CONSERVATIVE_DEFAULT_N_CTX, CONSERVATIVE_DEFAULT_X100_CORES,
+    CONSERVATIVE_TUNING_ADVISORY, CONSTRAINED_TEST_N_CTX, ClusterPlacement, ComputePool,
+    CoreAllocation, CostProfile, ExecutionCost, MemoryFootprintProfile, ModelEntry, ModelIdentity,
+    ModelListResponse, ModelLoadAuditEvent, ModelProfile, PriorityClass, ProfileStatus,
+    QuantizationInfo, TuningAdvisory, TuningProfile,
 };
 pub use recipe::{ArchRecipe, ExecutionContext};
 pub use tensor::{ModelWeights, QuantType, TensorView};
