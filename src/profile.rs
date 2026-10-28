@@ -129,7 +129,7 @@ pub struct MemoryFootprintProfile {
 }
 
 /// Evidence-based tuning advisory recommendations derived from ceiling attainment (ADR-032).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TuningAdvisory {
     /// Primary bottleneck classification ("bandwidth-bound" or "compute-bound").
     pub bottleneck_classification: String,

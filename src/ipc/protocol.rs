@@ -32,12 +32,16 @@ pub enum StatusCode {
     AffinityError = 13,
     /// Zero-copy tensor bounds check failed.
     TensorBoundsError = 14,
+    /// Automatic request routing unavailable (US-12).
+    RoutingUnavailable = 15,
     /// Requested arena ID was not found.
     ArenaNotFound = 20,
     /// Internal daemon execution failure.
     InternalError = 21,
     /// Framing or protocol violation.
     ProtocolError = 22,
+    /// Admission queue saturated or estimated wait exceeded (US-13).
+    QueueSaturated = 23,
 }
 
 impl StatusCode {
@@ -62,6 +66,8 @@ impl StatusCode {
             K3Error::ContextLengthExceeded { .. } => Self::ContextLengthExceeded,
             K3Error::AffinityError { .. } => Self::AffinityError,
             K3Error::TensorBoundsError { .. } => Self::TensorBoundsError,
+            K3Error::RoutingUnavailable { .. } => Self::RoutingUnavailable,
+            K3Error::QueueSaturated { .. } => Self::QueueSaturated,
         }
     }
 
@@ -87,8 +93,10 @@ impl StatusCode {
             12 => Self::ContextLengthExceeded,
             13 => Self::AffinityError,
             14 => Self::TensorBoundsError,
+            15 => Self::RoutingUnavailable,
             20 => Self::ArenaNotFound,
             22 => Self::ProtocolError,
+            23 => Self::QueueSaturated,
             _ => Self::InternalError,
         }
     }

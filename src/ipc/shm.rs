@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sendfd::{RecvWithFd, SendWithFd};
 use zerocopy::FromBytes;
 
-use super::layout::{ArenaHeader, KvBlockMeta};
+use super::layout::{ArenaHeader, KvBlockMeta, KvBlockTag};
 use crate::error::K3Error;
 
 /// Operator memlock limit ceiling: 28 GiB (Rule 5, ADR-037).
@@ -770,6 +770,45 @@ impl SharedMemoryArena {
         })
     }
 
+    /// Scans context blocks in this arena and returns the indices of blocks eligible for eviction
+    /// (`meta.is_evictable()`, meaning `tag == TAG_VOLATILE && refcount == 0`).
+    ///
+    /// # Errors
+    /// Returns [`K3Error`] if arena header or metadata offsets are invalid.
+    pub fn find_evictable_blocks(&self) -> Result<Vec<usize>, K3Error> {
+        let block_count = usize::try_from(self.header()?.block_count).unwrap_or(0);
+        let mut evictable = Vec::new();
+        for idx in 0..block_count {
+            if self.block_meta(idx)?.is_evictable() {
+                evictable.push(idx);
+            }
+        }
+        Ok(evictable)
+    }
+
+    /// Scans context blocks strictly within this shared memory arena, identifies unreferenced
+    /// volatile blocks (`meta.is_evictable()`), resets up to `target_free_blocks` of them to `TAG_FREE`
+    /// (with `committed_token_count = 0`), and returns the count of reclaimed blocks.
+    ///
+    /// Eviction is strictly isolated to this arena, never touching or leaking into other model arenas.
+    ///
+    /// # Errors
+    /// Returns [`K3Error`] if arena header or metadata offsets are invalid.
+    pub fn evict_lru_intra_arena(&mut self, target_free_blocks: usize) -> Result<usize, K3Error> {
+        let evictable_indices = self.find_evictable_blocks()?;
+        let mut freed = 0;
+        for idx in evictable_indices {
+            if freed >= target_free_blocks {
+                break;
+            }
+            let meta = self.block_meta_mut(idx)?;
+            meta.set_tag(KvBlockTag::Free);
+            meta.set_committed_tokens(0);
+            freed += 1;
+        }
+        Ok(freed)
+    }
+
     /// Locks the arena pages into physical RAM via `libc::mlock`.
     ///
     /// # Errors
@@ -994,7 +1033,7 @@ mod tests {
         {
             let meta = arena.block_meta_mut(0).expect("block_meta_mut");
             *meta = KvBlockMeta::default();
-            meta.set_tag(crate::ipc::layout::KvBlockTag::Persist);
+            meta.set_tag(KvBlockTag::Persist);
             meta.set_committed_tokens(12);
         }
 
