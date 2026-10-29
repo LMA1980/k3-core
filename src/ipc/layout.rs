@@ -199,6 +199,21 @@ impl Default for KvBlockMeta {
 }
 
 impl KvBlockMeta {
+    /// Creates a new [`KvBlockMeta`] with the specified block ID and initial committed token count.
+    #[must_use]
+    pub const fn new(block_id: u32, committed_token_count: u32) -> Self {
+        Self {
+            block_id,
+            tag: TAG_VOLATILE,
+            _pad0: 0,
+            refcount: 1,
+            committed_token_count,
+            _pad1: 0,
+            sampler_rng_state: [42, 0, 0, 0],
+            padding: [0; 16],
+        }
+    }
+
     /// Returns the parsed [`KvBlockTag`].
     #[must_use]
     pub fn tag_enum(&self) -> Option<KvBlockTag> {
@@ -219,6 +234,52 @@ impl KvBlockMeta {
     /// Sets the number of committed tokens.
     pub fn set_committed_tokens(&mut self, count: u32) {
         self.committed_token_count = count;
+    }
+
+    /// Returns the current reference count.
+    #[must_use]
+    #[inline]
+    pub const fn ref_count(&self) -> u16 {
+        self.refcount
+    }
+
+    /// Increments the reference count using saturating addition.
+    ///
+    /// Returns the updated reference count.
+    #[inline]
+    pub fn inc_ref(&mut self) -> u16 {
+        self.refcount = self.refcount.saturating_add(1);
+        self.refcount
+    }
+
+    /// Decrements the reference count using saturating subtraction.
+    ///
+    /// Returns the updated reference count.
+    #[inline]
+    pub fn dec_ref(&mut self) -> u16 {
+        self.refcount = self.refcount.saturating_sub(1);
+        self.refcount
+    }
+
+    /// Returns `true` if this block is shared by multiple sessions (`refcount > 1`).
+    #[must_use]
+    #[inline]
+    pub const fn is_shared(&self) -> bool {
+        self.refcount > 1
+    }
+
+    /// Returns `true` if mutating this block requires a Copy-On-Write (COW) clone (`refcount > 1`).
+    #[must_use]
+    #[inline]
+    pub const fn needs_cow(&self) -> bool {
+        self.refcount > 1
+    }
+
+    /// Returns `true` if this block is unreferenced and eligible for LRU eviction (`refcount == 0 && tag == TAG_VOLATILE`).
+    #[must_use]
+    #[inline]
+    pub const fn is_evictable(&self) -> bool {
+        self.refcount == 0 && self.tag == TAG_VOLATILE
     }
 }
 
@@ -381,5 +442,50 @@ mod tests {
         assert_eq!(meta_bytes.len(), 64);
         let recovered_meta = KvBlockMeta::read_from_bytes(meta_bytes).expect("zerocopy meta");
         assert_eq!(recovered_meta, meta);
+    }
+
+    #[test]
+    fn test_kv_block_meta_refcounting_lifecycle() {
+        let mut meta = KvBlockMeta::default();
+        // default has refcount=1, tag=TAG_VOLATILE
+        assert_eq!(meta.refcount, 1);
+        assert!(!meta.is_shared());
+        assert!(!meta.needs_cow());
+        assert!(!meta.is_evictable());
+
+        // Increment refcount
+        assert_eq!(meta.inc_ref(), 2);
+        assert!(meta.is_shared());
+        assert!(meta.needs_cow());
+        assert!(!meta.is_evictable());
+
+        // Decrement refcount back to 1
+        assert_eq!(meta.dec_ref(), 1);
+        assert!(!meta.is_shared());
+        assert!(!meta.needs_cow());
+        assert!(!meta.is_evictable());
+
+        // Decrement to 0
+        assert_eq!(meta.dec_ref(), 0);
+        assert!(!meta.is_shared());
+        assert!(!meta.needs_cow());
+        assert!(meta.is_evictable()); // refcount == 0 && tag == TAG_VOLATILE
+
+        // Saturating sub underflow safety
+        assert_eq!(meta.dec_ref(), 0);
+        assert_eq!(meta.refcount, 0);
+
+        // Saturating add overflow safety
+        meta.refcount = u16::MAX;
+        assert_eq!(meta.inc_ref(), u16::MAX);
+        assert_eq!(meta.refcount, u16::MAX);
+
+        // If tag is not TAG_VOLATILE, not evictable even with refcount 0
+        meta.refcount = 0;
+        meta.set_tag(KvBlockTag::Persist);
+        assert!(!meta.is_evictable());
+
+        meta.set_tag(KvBlockTag::Free);
+        assert!(!meta.is_evictable());
     }
 }

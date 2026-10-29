@@ -55,6 +55,22 @@ pub enum K3Error {
         /// Specific reason the bounds or layout check failed.
         reason: String,
     },
+    /// Automatic request routing unavailable (US-12, ADR-013).
+    RoutingUnavailable {
+        /// Diagnostic explanation of the routing failure.
+        reason: String,
+    },
+    /// Model admission queue capacity reached or estimated wait exceeded (US-13, ADR-015).
+    QueueSaturated {
+        /// Logical model identifier.
+        model_id: String,
+        /// Current depth of the admission queue (number of pending requests).
+        current_depth: usize,
+        /// Configured maximum queue capacity ceiling (default 64).
+        max_depth: usize,
+        /// Recommended client retry interval in seconds.
+        retry_after_secs: u32,
+    },
 }
 
 impl K3Error {
@@ -67,6 +83,8 @@ impl K3Error {
             Self::ContextLengthExceeded { .. } => "context_length_exceeded",
             Self::AffinityError { .. } => "affinity_error",
             Self::TensorBoundsError { .. } => "tensor_bounds_error",
+            Self::RoutingUnavailable { .. } => "routing_unavailable",
+            Self::QueueSaturated { .. } => "queue_saturated",
         }
     }
 }
@@ -120,6 +138,18 @@ impl fmt::Display for K3Error {
                 f,
                 "[tensor_bounds_error] tensor '{tensor_name}' (offset: {offset}, \
                  len: {byte_len}, buffer_len: {buffer_len}): {reason}"
+            ),
+            Self::RoutingUnavailable { reason } => {
+                write!(f, "[routing_unavailable] routing unavailable: {reason}")
+            }
+            Self::QueueSaturated {
+                model_id,
+                current_depth,
+                max_depth,
+                retry_after_secs,
+            } => write!(
+                f,
+                "[queue_saturated] model '{model_id}' admission queue is saturated (depth: {current_depth}/{max_depth}); retry after {retry_after_secs}s"
             ),
         }
     }
