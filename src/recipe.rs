@@ -136,6 +136,16 @@ pub trait ArchRecipe: Send + Sync + core::fmt::Debug {
     /// Returns the exact GGUF `general.architecture` identifier handled by this recipe.
     fn architecture_id(&self) -> &'static str;
 
+    /// Returns the exact recipe revision string (e.g., `"1.0.0"`) per ADR-023.
+    fn recipe_version(&self) -> &'static str {
+        "1.0.0"
+    }
+
+    /// Returns the supported target weight layouts (e.g., `&["native", "ime_tile_8x16"]`) per ADR-037.
+    fn target_layouts(&self) -> &'static [&'static str] {
+        &["native"]
+    }
+
     /// Returns `true` if this recipe and its linked kernel backend support `quant`.
     fn supports_quant(&self, quant: QuantType) -> bool;
 
