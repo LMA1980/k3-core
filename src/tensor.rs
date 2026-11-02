@@ -327,14 +327,14 @@ impl<'a> TensorView<'a> {
         self.shape.as_slice()
     }
 
-    /// Slices a contiguous range of rows from a 2D (or higher) matrix view without copying.
+    /// Slices a contiguous range of rows from a strictly 2D matrix view `[cols, rows]` without copying.
     ///
     /// Dimension 0 (`shape[0]`) represents the contiguous row elements (columns), while
     /// dimension 1 (`shape[1]`) represents the total row count.
     ///
     /// # Errors
     /// Returns [`K3Error::TensorBoundsError`] if:
-    /// - `self.shape.len() < 2`,
+    /// - `self.shape.len() != 2`,
     /// - `row_start + row_count > self.shape[1]`,
     /// - `self.shape[0]` is not divisible by the quantization format's `block_elements()`,
     /// - or if byte offset calculations overflow.
@@ -348,14 +348,14 @@ impl<'a> TensorView<'a> {
         row_count: usize,
     ) -> Result<TensorView<'a>, K3Error> {
         let shape = self.shape();
-        if shape.len() < 2 {
+        if shape.len() != 2 {
             return Err(K3Error::TensorBoundsError {
                 tensor_name: self.name.to_owned(),
                 offset: self.offset,
                 byte_len: self.data.len(),
                 buffer_len: self.data.len(),
                 reason: format!(
-                    "slice_rows requires at least 2 dimensions, found shape with {} dimension(s)",
+                    "slice_rows requires exactly 2 dimensions [cols, rows], found shape with {} dimension(s)",
                     shape.len()
                 ),
             });
@@ -468,10 +468,7 @@ impl<'a> TensorView<'a> {
                     reason: "offset + start_byte overflowed usize".to_owned(),
                 })?;
 
-        let mut new_dims = [0usize; 8];
-        let shape_len = shape.len().min(8);
-        new_dims[..shape_len].copy_from_slice(&shape[..shape_len]);
-        new_dims[1] = row_count;
+        let new_dims = [shape[0], row_count, 0, 0, 0, 0, 0, 0];
 
         let num_elements =
             row_count
@@ -489,7 +486,7 @@ impl<'a> TensorView<'a> {
         Ok(TensorView {
             name: self.name,
             quant: self.quant,
-            shape: TensorShape::Inline(new_dims, shape_len),
+            shape: TensorShape::Inline(new_dims, 2),
             num_elements,
             offset: new_offset,
             data: sub_data,

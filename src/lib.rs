@@ -395,12 +395,18 @@ mod tests {
     fn test_tensor_view_slice_rows_validations_and_edge_cases() {
         let backing = vec![0u8; 576];
 
-        // 1. Less than 2 dimensions
+        // 1. Non-2D dimensions (1D or 3D+)
         let view_1d = TensorView::from_bytes("vec_1d", QuantType::F32, &[64], 0, &backing)
             .expect("valid 1d view");
         let err_1d = view_1d.slice_rows(0, 1).expect_err("must reject 1d");
         assert!(matches!(err_1d, K3Error::TensorBoundsError { .. }));
-        assert!(err_1d.to_string().contains("at least 2 dimensions"));
+        assert!(err_1d.to_string().contains("exactly 2 dimensions"));
+
+        let view_3d = TensorView::from_bytes("mat_3d", QuantType::F32, &[4, 4, 2], 0, &backing)
+            .expect("valid 3d view");
+        let err_3d = view_3d.slice_rows(0, 1).expect_err("must reject 3d");
+        assert!(matches!(err_3d, K3Error::TensorBoundsError { .. }));
+        assert!(err_3d.to_string().contains("exactly 2 dimensions"));
 
         // 2. Out of bounds row range
         let view_2d = TensorView::from_bytes("mat_2d", QuantType::Q4_K_M, &[256, 4], 0, &backing)
