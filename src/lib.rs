@@ -6,6 +6,7 @@ pub mod coordination;
 pub mod error;
 pub mod gguf;
 pub mod ipc;
+pub mod manifest;
 pub mod profile;
 pub mod recipe;
 pub mod tensor;
@@ -29,6 +30,7 @@ pub use ipc::{
     ArenaHeader, ArenaOptions, ArenaSocketExt, IpcError, IpcMessage, KvBlockMeta, KvBlockTag,
     OutputSlabHeader, SharedMemoryArena, StatusCode, TokenInputSlotHeader,
 };
+pub use manifest::ModelManifest;
 pub use profile::{
     CONSERVATIVE_DEFAULT_A100_CORES, CONSERVATIVE_DEFAULT_N_CTX, CONSERVATIVE_DEFAULT_X100_CORES,
     CONSERVATIVE_TUNING_ADVISORY, CONSTRAINED_TEST_N_CTX, ClusterPlacement, ComputePool,
@@ -37,7 +39,7 @@ pub use profile::{
     QuantizationInfo, TuningAdvisory, TuningProfile,
 };
 pub use recipe::{ArchRecipe, ExecutionContext};
-pub use tensor::{ModelWeights, QuantType, TensorView};
+pub use tensor::{ModelWeights, QuantType, TensorShape, TensorView};
 
 #[cfg(test)]
 mod tests {
@@ -321,5 +323,128 @@ mod tests {
                 max_context_tokens: 4,
             })
         );
+    }
+
+    #[test]
+    fn test_tensor_view_slice_rows_valid_q4_k_m() {
+        // 4 rows of 256 elements in Q4_K_M: 4 blocks * 144 = 576 bytes
+        let mut backing = vec![0x11_u8; 576];
+        // Distinguish second half
+        backing[288..].fill(0x22);
+
+        let view = TensorView::from_bytes(
+            "blk.0.attn_qkv.weight",
+            QuantType::Q4_K_M,
+            &[256, 4],
+            0,
+            &backing,
+        )
+        .expect("valid tensor");
+
+        // Slice rows 0..2 (Q partition)
+        let slice_q = view.slice_rows(0, 2).expect("slice Q succeeds");
+        assert_eq!(slice_q.name(), "blk.0.attn_qkv.weight");
+        assert_eq!(slice_q.quant(), QuantType::Q4_K_M);
+        assert_eq!(slice_q.shape(), &[256, 2]);
+        assert_eq!(slice_q.num_elements(), 512);
+        assert_eq!(slice_q.offset(), 0);
+        assert_eq!(slice_q.byte_len(), 288);
+        assert_eq!(slice_q.as_bytes()[0], 0x11);
+        assert_eq!(slice_q.as_bytes().as_ptr(), backing.as_ptr());
+
+        // Slice rows 2..2 (KV partition)
+        let slice_kv = view.slice_rows(2, 2).expect("slice KV succeeds");
+        assert_eq!(slice_kv.shape(), &[256, 2]);
+        assert_eq!(slice_kv.num_elements(), 512);
+        assert_eq!(slice_kv.offset(), 288);
+        assert_eq!(slice_kv.byte_len(), 288);
+        assert_eq!(slice_kv.as_bytes()[0], 0x22);
+        // SAFETY: 288 is strictly within backing buffer bounds (576 bytes).
+        let expected_ptr = unsafe { backing.as_ptr().add(288) };
+        assert_eq!(slice_kv.as_bytes().as_ptr(), expected_ptr);
+    }
+
+    #[test]
+    fn test_tensor_view_slice_rows_valid_f32_and_q8_0() {
+        // F32: 4 rows of 16 elements = 64 elements * 4 = 256 bytes
+        let backing_f32 = vec![0xAA_u8; 256];
+        let view_f32 =
+            TensorView::from_bytes("f32_matrix", QuantType::F32, &[16, 4], 0, &backing_f32)
+                .expect("valid F32 view");
+
+        let slice_f32 = view_f32.slice_rows(1, 2).expect("slice F32 succeeds");
+        assert_eq!(slice_f32.shape(), &[16, 2]);
+        assert_eq!(slice_f32.offset(), 64);
+        assert_eq!(slice_f32.byte_len(), 128);
+        assert_eq!(slice_f32.num_elements(), 32);
+
+        // Q8_0: 3 rows of 32 elements = 3 blocks * 34 = 102 bytes
+        let backing_q8 = vec![0xBB_u8; 102];
+        let view_q8 =
+            TensorView::from_bytes("q8_matrix", QuantType::Q8_0, &[32, 3], 0, &backing_q8)
+                .expect("valid Q8_0 view");
+
+        let slice_q8 = view_q8.slice_rows(1, 1).expect("slice Q8_0 succeeds");
+        assert_eq!(slice_q8.shape(), &[32, 1]);
+        assert_eq!(slice_q8.offset(), 34);
+        assert_eq!(slice_q8.byte_len(), 34);
+        assert_eq!(slice_q8.num_elements(), 32);
+    }
+
+    #[test]
+    fn test_tensor_view_slice_rows_validations_and_edge_cases() {
+        let backing = vec![0u8; 576];
+
+        // 1. Non-2D dimensions (1D or 3D+)
+        let view_1d = TensorView::from_bytes("vec_1d", QuantType::F32, &[64], 0, &backing)
+            .expect("valid 1d view");
+        let err_1d = view_1d.slice_rows(0, 1).expect_err("must reject 1d");
+        assert!(matches!(err_1d, K3Error::TensorBoundsError { .. }));
+        assert!(err_1d.to_string().contains("exactly 2 dimensions"));
+
+        let view_3d = TensorView::from_bytes("mat_3d", QuantType::F32, &[4, 4, 2], 0, &backing)
+            .expect("valid 3d view");
+        let err_3d = view_3d.slice_rows(0, 1).expect_err("must reject 3d");
+        assert!(matches!(err_3d, K3Error::TensorBoundsError { .. }));
+        assert!(err_3d.to_string().contains("exactly 2 dimensions"));
+
+        // 2. Out of bounds row range
+        let view_2d = TensorView::from_bytes("mat_2d", QuantType::Q4_K_M, &[256, 4], 0, &backing)
+            .expect("valid 2d view");
+        let err_oob = view_2d
+            .slice_rows(3, 2)
+            .expect_err("must reject row overflow");
+        assert!(matches!(err_oob, K3Error::TensorBoundsError { .. }));
+        assert!(err_oob.to_string().contains("exceeds tensor row count"));
+
+        // 3. Block alignment failure (e.g. Q4_K_M requires columns % 256 == 0)
+        let unaligned_backing = vec![0u8; 1000];
+        // Construct view with 128 columns for Q4_0 where block size is 32 (aligned), but if we use Q4_K_M (block 256)
+        // Note: calculate_bounds will check total elements % block_elements == 0.
+        // If shape is [128, 2], total = 256, which divides 256. But row length 128 does not divide 256!
+        let view_unaligned_row = TensorView::from_bytes(
+            "mat_unaligned_row",
+            QuantType::Q4_K_M,
+            &[128, 2],
+            0,
+            &unaligned_backing,
+        )
+        .expect("valid total element count");
+        let err_align = view_unaligned_row
+            .slice_rows(0, 1)
+            .expect_err("must reject unaligned row length");
+        assert!(matches!(err_align, K3Error::TensorBoundsError { .. }));
+        assert!(
+            err_align
+                .to_string()
+                .contains("not divisible by Q4_K_M block size 256")
+        );
+
+        // 4. Zero rows slice
+        let slice_zero = view_2d.slice_rows(1, 0).expect("zero row slice succeeds");
+        assert_eq!(slice_zero.shape(), &[256, 0]);
+        assert_eq!(slice_zero.byte_len(), 0);
+        assert_eq!(slice_zero.num_elements(), 0);
+        assert_eq!(slice_zero.offset(), 144);
     }
 }

@@ -104,8 +104,16 @@ pub struct ArenaHeader {
     pub output_slabs_offset: u64,
     /// Monotonically incrementing generation counter for state tracking.
     pub generation_counter: u64,
+    /// Sliding window attention size (0 if full causal attention).
+    pub swa_window_size: u32,
+    /// Total number of routed experts in Sparse `MoE` models (0 for dense models).
+    pub num_experts: u16,
+    /// Number of active experts routed per token (e.g. 2 for Mixtral).
+    pub num_experts_per_tok: u16,
+    /// Byte offset from arena base to pre-split or derived weights.
+    pub derived_weights_offset: u64,
     /// Explicit padding to ensure exact 128-byte size with zero compiler gaps.
-    pub _reserved: [u8; 40],
+    pub _reserved: [u8; 24],
 }
 
 impl Default for ArenaHeader {
@@ -127,7 +135,11 @@ impl Default for ArenaHeader {
             kv_blocks_offset: 1024,
             output_slabs_offset: 4096,
             generation_counter: 0,
-            _reserved: [0; 40],
+            swa_window_size: 0,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            derived_weights_offset: 0,
+            _reserved: [0; 24],
         }
     }
 }
@@ -487,5 +499,35 @@ mod tests {
 
         meta.set_tag(KvBlockTag::Free);
         assert!(!meta.is_evictable());
+    }
+
+    #[test]
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "verifying exact carved reserved byte array length"
+    )]
+    fn test_arena_header_evolution_and_carved_fields() {
+        assert_eq!(size_of::<ArenaHeader>(), 128);
+        assert_eq!(align_of::<ArenaHeader>(), 64);
+
+        let hdr = ArenaHeader {
+            swa_window_size: 4096,
+            num_experts: 8,
+            num_experts_per_tok: 2,
+            derived_weights_offset: 65536,
+            ..Default::default()
+        };
+
+        let bytes = hdr.as_bytes();
+        assert_eq!(bytes.len(), 128);
+
+        let recovered = ArenaHeader::read_from_bytes(bytes).expect("roundtrip");
+        assert_eq!(recovered.swa_window_size, 4096);
+        assert_eq!(recovered.num_experts, 8);
+        assert_eq!(recovered.num_experts_per_tok, 2);
+        assert_eq!(recovered.derived_weights_offset, 65536);
+        assert_eq!(recovered.version, ARENA_VERSION);
+        assert_eq!(recovered._reserved.len(), 24);
+        assert_eq!(recovered, hdr);
     }
 }

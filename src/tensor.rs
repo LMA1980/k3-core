@@ -129,12 +129,66 @@ impl fmt::Display for QuantType {
     }
 }
 
+/// Storage for tensor shape dimensions supporting borrowed slices and inline shapes.
+#[derive(Debug, Clone, Copy)]
+pub enum TensorShape<'a> {
+    /// Borrowed slice from external metadata.
+    Borrowed(&'a [usize]),
+    /// Inline array for sliced/derived views (up to 8 dimensions).
+    Inline([usize; 8], usize),
+}
+
+impl TensorShape<'_> {
+    /// Returns the shape dimensions as a slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &[usize] {
+        match self {
+            Self::Borrowed(s) => s,
+            Self::Inline(dims, len) => &dims[..*len],
+        }
+    }
+}
+
+impl core::ops::Deref for TensorShape<'_> {
+    type Target = [usize];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl PartialEq for TensorShape<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for TensorShape<'_> {}
+
+impl PartialEq<[usize]> for TensorShape<'_> {
+    fn eq(&self, other: &[usize]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl PartialEq<&[usize]> for TensorShape<'_> {
+    fn eq(&self, other: &&[usize]) -> bool {
+        self.as_slice() == *other
+    }
+}
+
+impl fmt::Display for TensorShape<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.as_slice())
+    }
+}
+
 /// Zero-copy view into an `mlock`ed weight buffer with verified shape and byte bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TensorView<'a> {
     name: &'a str,
     quant: QuantType,
-    shape: &'a [usize],
+    shape: TensorShape<'a>,
     num_elements: usize,
     offset: usize,
     data: &'a [u8],
@@ -248,7 +302,7 @@ impl<'a> TensorView<'a> {
         Ok(Self {
             name,
             quant,
-            shape,
+            shape: TensorShape::Borrowed(shape),
             num_elements,
             offset,
             data,
@@ -269,8 +323,174 @@ impl<'a> TensorView<'a> {
 
     /// Returns the tensor's dimension slice.
     #[must_use]
-    pub const fn shape(&self) -> &'a [usize] {
-        self.shape
+    pub fn shape(&self) -> &[usize] {
+        self.shape.as_slice()
+    }
+
+    /// Slices a contiguous range of rows from a strictly 2D matrix view `[cols, rows]` without copying.
+    ///
+    /// Dimension 0 (`shape[0]`) represents the contiguous row elements (columns), while
+    /// dimension 1 (`shape[1]`) represents the total row count.
+    ///
+    /// # Errors
+    /// Returns [`K3Error::TensorBoundsError`] if:
+    /// - `self.shape.len() != 2`,
+    /// - `row_start + row_count > self.shape[1]`,
+    /// - `self.shape[0]` is not divisible by the quantization format's `block_elements()`,
+    /// - or if byte offset calculations overflow.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "comprehensive bounds, block-alignment, and slice calculations"
+    )]
+    pub fn slice_rows(
+        &self,
+        row_start: usize,
+        row_count: usize,
+    ) -> Result<TensorView<'a>, K3Error> {
+        let shape = self.shape();
+        if shape.len() != 2 {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "slice_rows requires exactly 2 dimensions [cols, rows], found shape with {} dimension(s)",
+                    shape.len()
+                ),
+            });
+        }
+
+        let total_rows = shape[1];
+        let end_row =
+            row_start
+                .checked_add(row_count)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "row_start + row_count overflowed usize".to_owned(),
+                })?;
+
+        if end_row > total_rows {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "sliced row range [{row_start}..{end_row}] exceeds tensor row count {total_rows}"
+                ),
+            });
+        }
+
+        let row_elements = shape[0];
+        let block_elems = self.quant.block_elements();
+        if row_elements % block_elems != 0 {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "tensor row length {row_elements} is not divisible by {quant} block size {block_elems}",
+                    quant = self.quant.as_str()
+                ),
+            });
+        }
+
+        let row_blocks = row_elements / block_elems;
+        let row_bytes = row_blocks
+            .checked_mul(self.quant.block_bytes())
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: "row_bytes calculation overflowed usize".to_owned(),
+            })?;
+
+        let start_byte =
+            row_start
+                .checked_mul(row_bytes)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "start_byte calculation overflowed usize".to_owned(),
+                })?;
+
+        let slice_byte_len =
+            row_count
+                .checked_mul(row_bytes)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "slice_byte_len calculation overflowed usize".to_owned(),
+                })?;
+
+        let end_byte =
+            start_byte
+                .checked_add(slice_byte_len)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "start_byte + slice_byte_len overflowed usize".to_owned(),
+                })?;
+
+        if end_byte > self.data.len() {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "sliced byte range [{start_byte}..{end_byte}] exceeds available data length {}",
+                    self.data.len()
+                ),
+            });
+        }
+
+        let new_offset =
+            self.offset
+                .checked_add(start_byte)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "offset + start_byte overflowed usize".to_owned(),
+                })?;
+
+        let new_dims = [shape[0], row_count, 0, 0, 0, 0, 0, 0];
+
+        let num_elements =
+            row_count
+                .checked_mul(row_elements)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "num_elements calculation overflowed usize".to_owned(),
+                })?;
+
+        let sub_data = &self.data[start_byte..end_byte];
+
+        Ok(TensorView {
+            name: self.name,
+            quant: self.quant,
+            shape: TensorShape::Inline(new_dims, 2),
+            num_elements,
+            offset: new_offset,
+            data: sub_data,
+        })
     }
 
     /// Returns the total number of scalar elements in the tensor.
