@@ -6,6 +6,7 @@ pub mod coordination;
 pub mod error;
 pub mod gguf;
 pub mod ipc;
+pub mod manifest;
 pub mod profile;
 pub mod recipe;
 pub mod tensor;
@@ -29,6 +30,7 @@ pub use ipc::{
     ArenaHeader, ArenaOptions, ArenaSocketExt, IpcError, IpcMessage, KvBlockMeta, KvBlockTag,
     OutputSlabHeader, SharedMemoryArena, StatusCode, TokenInputSlotHeader,
 };
+pub use manifest::ModelManifest;
 pub use profile::{
     CONSERVATIVE_DEFAULT_A100_CORES, CONSERVATIVE_DEFAULT_N_CTX, CONSERVATIVE_DEFAULT_X100_CORES,
     CONSERVATIVE_TUNING_ADVISORY, CONSTRAINED_TEST_N_CTX, ClusterPlacement, ComputePool,
