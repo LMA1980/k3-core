@@ -1274,6 +1274,8 @@ pub mod test_helpers {
                 QuantType::Q4_K_M => 12,
                 QuantType::Q6_K => 14,
                 QuantType::BF16 => 30,
+                QuantType::TQ1_0 => 34,
+                QuantType::TQ2_0 => 35,
             };
             buf.extend_from_slice(&ggml_type_id.to_le_bytes());
             let rel_offset_u64 = u64::try_from(rel_offset).expect("rel_offset fits u64");
@@ -1568,5 +1570,76 @@ mod tests {
         let err = GgufFile::parse(&bytes).expect_err("must reject payload exceeding buffer");
         assert!(matches!(err, K3Error::TensorBoundsError { .. }));
         assert!(err.to_string().contains("exceeds buffer length"));
+    }
+
+    #[test]
+    fn test_tq1_0_tq2_0_bounds() {
+        use crate::profile::QuantizationInfo;
+
+        // 1. Synthesize a valid GGUF v3 file containing TQ1_0, TQ2_0, and F32 tensors
+        // - "blk.0.attn_q.weight": TQ1_0, shape [256, 2] -> 512 elements = 2 blocks = 108 bytes
+        // - "blk.0.attn_k.weight": TQ2_0, shape [256, 4] -> 1024 elements = 4 blocks = 264 bytes
+        // - "output_norm.weight":  F32,   shape [16]     -> 16 elements = 64 bytes
+        let tensor_specs = [
+            ("blk.0.attn_q.weight", QuantType::TQ1_0, &[256, 2][..]),
+            ("blk.0.attn_k.weight", QuantType::TQ2_0, &[256, 4][..]),
+            ("output_norm.weight", QuantType::F32, &[16][..]),
+        ];
+        let bytes = create_synthetic_gguf_v3("bitnet", 32, &tensor_specs);
+
+        // 2. Parse file
+        let gguf = GgufFile::parse(&bytes).expect("GGUF v3 parsing succeeds for TQ1_0 & TQ2_0");
+        let meta = gguf.metadata();
+
+        assert_eq!(meta.architecture(), "bitnet");
+        assert_eq!(meta.alignment(), 32);
+        assert_eq!(meta.tensor_count(), 3);
+        assert_eq!(meta.total_weight_bytes(), 108 + 264 + 64);
+
+        // 3. Verify ModelWeights trait retrieval
+        let q_view = gguf
+            .tensor("blk.0.attn_q.weight")
+            .expect("attn_q tensor found");
+        assert_eq!(q_view.name(), "blk.0.attn_q.weight");
+        assert_eq!(q_view.quant(), QuantType::TQ1_0);
+        assert_eq!(q_view.shape(), &[256, 2]);
+        assert_eq!(q_view.num_elements(), 512);
+        assert_eq!(q_view.byte_len(), 108);
+
+        let k_view = gguf
+            .tensor("blk.0.attn_k.weight")
+            .expect("attn_k tensor found");
+        assert_eq!(k_view.name(), "blk.0.attn_k.weight");
+        assert_eq!(k_view.quant(), QuantType::TQ2_0);
+        assert_eq!(k_view.shape(), &[256, 4]);
+        assert_eq!(k_view.num_elements(), 1024);
+        assert_eq!(k_view.byte_len(), 264);
+
+        let norm_view = gguf
+            .tensor("output_norm.weight")
+            .expect("output_norm tensor found");
+        assert_eq!(norm_view.quant(), QuantType::F32);
+        assert_eq!(norm_view.byte_len(), 64);
+
+        // 4. Verify QuantizationInfo integration
+        let q_info = QuantizationInfo::from_descriptors(meta.tensors());
+        // Primary format has highest aggregate byte footprint: TQ2_0 (264) > TQ1_0 (108) > F32 (64)
+        assert_eq!(q_info.primary, "TQ2_0");
+        assert_eq!(q_info.summary.get("TQ1_0"), Some(&1));
+        assert_eq!(q_info.summary.get("TQ2_0"), Some(&1));
+        assert_eq!(q_info.summary.get("F32"), Some(&1));
+        assert_eq!(q_info.tensor_bytes.get("TQ1_0"), Some(&108));
+        assert_eq!(q_info.tensor_bytes.get("TQ2_0"), Some(&264));
+        assert_eq!(q_info.tensor_bytes.get("F32"), Some(&64));
+
+        // 5. Boundary Condition: Truncated GGUF buffer (missing 1 byte of payload)
+        let mut truncated_bytes = bytes.clone();
+        truncated_bytes.truncate(bytes.len() - 1);
+        let err_trunc = GgufFile::parse(&truncated_bytes).unwrap_err();
+        assert!(matches!(err_trunc, K3Error::TensorBoundsError { .. }));
+        assert!(err_trunc.to_string().contains("exceeds buffer length"));
+
+        // 6. Nonexistent tensor lookup
+        assert!(gguf.tensor("nonexistent").is_err());
     }
 }

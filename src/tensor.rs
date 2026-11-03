@@ -22,6 +22,10 @@ pub enum QuantType {
     Q4_K_M,
     /// 6-bit K-quant super-blocks of 256 elements (`ggml_type = 14`, used by mixed `Q4_K_M` tensors).
     Q6_K,
+    /// 1.58-bit base-3 ternary quantization in blocks of 256 elements (`ggml_type = 34`).
+    TQ1_0,
+    /// 2-bit ternary quantization in blocks of 256 elements (`ggml_type = 35`).
+    TQ2_0,
 }
 
 impl QuantType {
@@ -36,6 +40,8 @@ impl QuantType {
             Self::Q8_0 => "Q8_0",
             Self::Q4_K_M => "Q4_K_M",
             Self::Q6_K => "Q6_K",
+            Self::TQ1_0 => "TQ1_0",
+            Self::TQ2_0 => "TQ2_0",
         }
     }
 
@@ -50,8 +56,32 @@ impl QuantType {
             12 => Some(Self::Q4_K_M),
             14 => Some(Self::Q6_K),
             30 => Some(Self::BF16),
+            34 => Some(Self::TQ1_0),
+            35 => Some(Self::TQ2_0),
             _ => None,
         }
+    }
+
+    /// Returns the GGUF v3 `ggml_type` integer ID for this quantization type.
+    #[must_use]
+    pub const fn ggml_type_id(&self) -> u32 {
+        match self {
+            Self::F32 => 0,
+            Self::F16 => 1,
+            Self::Q4_0 => 2,
+            Self::Q8_0 => 8,
+            Self::Q4_K_M => 12,
+            Self::Q6_K => 14,
+            Self::BF16 => 30,
+            Self::TQ1_0 => 34,
+            Self::TQ2_0 => 35,
+        }
+    }
+
+    /// Returns the canonical type name identifier (alias for [`Self::as_str`]).
+    #[must_use]
+    pub const fn type_name(&self) -> &'static str {
+        self.as_str()
     }
 
     /// Returns the number of scalar elements per quantization block.
@@ -60,7 +90,7 @@ impl QuantType {
         match self {
             Self::F32 | Self::F16 | Self::BF16 => 1,
             Self::Q4_0 | Self::Q8_0 => 32,
-            Self::Q4_K_M | Self::Q6_K => 256,
+            Self::Q4_K_M | Self::Q6_K | Self::TQ1_0 | Self::TQ2_0 => 256,
         }
     }
 
@@ -74,6 +104,8 @@ impl QuantType {
             Self::Q8_0 => 34,
             Self::Q4_K_M => 144,
             Self::Q6_K => 210,
+            Self::TQ1_0 => 54,
+            Self::TQ2_0 => 66,
         }
     }
 
@@ -536,4 +568,471 @@ pub trait ModelWeights: Sync {
 
     /// Returns the total resident byte footprint of all model weights.
     fn total_weight_bytes(&self) -> usize;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+    use crate::error::K3Error;
+
+    #[test]
+    fn test_tq_quant_type_descriptors() {
+        // 1. Canonical string identifiers and Display trait
+        assert_eq!(QuantType::TQ1_0.as_str(), "TQ1_0");
+        assert_eq!(QuantType::TQ1_0.type_name(), "TQ1_0");
+        assert_eq!(QuantType::TQ2_0.as_str(), "TQ2_0");
+        assert_eq!(QuantType::TQ2_0.type_name(), "TQ2_0");
+        assert_eq!(format!("{}", QuantType::TQ1_0), "TQ1_0");
+        assert_eq!(format!("{}", QuantType::TQ2_0), "TQ2_0");
+
+        // 2. GGUF type ID mapping
+        assert_eq!(QuantType::from_gguf_type_id(34), Some(QuantType::TQ1_0));
+        assert_eq!(QuantType::from_gguf_type_id(35), Some(QuantType::TQ2_0));
+        assert_eq!(QuantType::TQ1_0.ggml_type_id(), 34);
+        assert_eq!(QuantType::TQ2_0.ggml_type_id(), 35);
+
+        // 3. Block size and byte footprint
+        assert_eq!(QuantType::TQ1_0.block_elements(), 256);
+        assert_eq!(QuantType::TQ2_0.block_elements(), 256);
+        assert_eq!(QuantType::TQ1_0.block_bytes(), 54);
+        assert_eq!(QuantType::TQ2_0.block_bytes(), 66);
+
+        // 4. Exact block multiples storage calculations
+        // 1 block (256 elements)
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w", 256).unwrap(), 54);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w", 256).unwrap(), 66);
+
+        // 2 blocks (512 elements)
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w", 512).unwrap(), 108);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w", 512).unwrap(), 132);
+
+        // 4 blocks (1024 elements)
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w", 1024).unwrap(), 216);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w", 1024).unwrap(), 264);
+
+        // 8 blocks (2048 elements)
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w", 2048).unwrap(), 432);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w", 2048).unwrap(), 528);
+
+        // 5. Boundary Condition: Empty tensor (0 elements) must fail
+        let err_zero_tq1 = QuantType::TQ1_0.storage_bytes("empty", 0).unwrap_err();
+        assert_eq!(
+            err_zero_tq1,
+            K3Error::TensorBoundsError {
+                tensor_name: "empty".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "tensor element count must be greater than zero".to_owned(),
+            }
+        );
+        let err_zero_tq2 = QuantType::TQ2_0.storage_bytes("empty", 0).unwrap_err();
+        assert_eq!(
+            err_zero_tq2,
+            K3Error::TensorBoundsError {
+                tensor_name: "empty".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "tensor element count must be greater than zero".to_owned(),
+            }
+        );
+
+        // 6. Boundary Condition: Non-divisible element counts must fail
+        let err_rem_255 = QuantType::TQ1_0
+            .storage_bytes("unaligned", 255)
+            .unwrap_err();
+        assert_eq!(
+            err_rem_255,
+            K3Error::TensorBoundsError {
+                tensor_name: "unaligned".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "element count 255 is not divisible by TQ1_0 block size 256".to_owned(),
+            }
+        );
+
+        let err_rem_257 = QuantType::TQ1_0
+            .storage_bytes("unaligned", 257)
+            .unwrap_err();
+        assert_eq!(
+            err_rem_257,
+            K3Error::TensorBoundsError {
+                tensor_name: "unaligned".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "element count 257 is not divisible by TQ1_0 block size 256".to_owned(),
+            }
+        );
+
+        let err_rem_100 = QuantType::TQ2_0
+            .storage_bytes("unaligned", 100)
+            .unwrap_err();
+        assert_eq!(
+            err_rem_100,
+            K3Error::TensorBoundsError {
+                tensor_name: "unaligned".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "element count 100 is not divisible by TQ2_0 block size 256".to_owned(),
+            }
+        );
+
+        // 7. Boundary Condition: Arithmetic overflow in storage_bytes
+        let overflow_elements_f32 = (usize::MAX / 4) + 1;
+        let err_of_f32 = QuantType::F32
+            .storage_bytes("overflow", overflow_elements_f32)
+            .unwrap_err();
+        assert!(matches!(err_of_f32, K3Error::TensorBoundsError { .. }));
+        assert!(err_of_f32.to_string().contains("byte size overflow"));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_tq1_0_tq2_0_tensor_view_bounds() {
+        // Storage bytes calculation:
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w1", 256).unwrap(), 54);
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w1", 512).unwrap(), 108);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w2", 256).unwrap(), 66);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w2", 512).unwrap(), 132);
+
+        // Divisibility rejection:
+        let err_tq1 = QuantType::TQ1_0.storage_bytes("w1", 255);
+        assert!(matches!(err_tq1, Err(K3Error::TensorBoundsError { .. })));
+        assert!(
+            err_tq1
+                .unwrap_err()
+                .to_string()
+                .contains("not divisible by TQ1_0 block size 256")
+        );
+
+        let err_tq2 = QuantType::TQ2_0.storage_bytes("w2", 300);
+        assert!(matches!(err_tq2, Err(K3Error::TensorBoundsError { .. })));
+        assert!(
+            err_tq2
+                .unwrap_err()
+                .to_string()
+                .contains("not divisible by TQ2_0 block size 256")
+        );
+
+        // Zero elements:
+        assert!(matches!(
+            QuantType::TQ1_0.storage_bytes("w", 0),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+        assert!(matches!(
+            QuantType::TQ2_0.storage_bytes("w", 0),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+
+        // Backing buffer with 1 block TQ1_0 (54B) + 1 block TQ2_0 (66B) = 120B total
+        let backing = vec![0x33_u8; 120];
+
+        // 1. Valid TQ1_0 view: 256 elements -> 54 bytes at offset 0
+        let view_tq1 =
+            TensorView::from_bytes("blk.0.attn_q.weight", QuantType::TQ1_0, &[256], 0, &backing)
+                .expect("valid TQ1_0 bounds");
+        assert_eq!(view_tq1.name(), "blk.0.attn_q.weight");
+        assert_eq!(view_tq1.quant(), QuantType::TQ1_0);
+        assert_eq!(view_tq1.shape(), &[256]);
+        assert_eq!(view_tq1.num_elements(), 256);
+        assert_eq!(view_tq1.offset(), 0);
+        assert_eq!(view_tq1.byte_len(), 54);
+        assert_eq!(view_tq1.as_bytes().as_ptr(), backing.as_ptr());
+
+        // 2. Valid TQ2_0 view: 256 elements -> 66 bytes at offset 54 (54 + 66 == 120)
+        let view_tq2 = TensorView::from_bytes(
+            "blk.0.attn_k.weight",
+            QuantType::TQ2_0,
+            &[256],
+            54,
+            &backing,
+        )
+        .expect("valid TQ2_0 bounds at end of buffer");
+        assert_eq!(view_tq2.name(), "blk.0.attn_k.weight");
+        assert_eq!(view_tq2.quant(), QuantType::TQ2_0);
+        assert_eq!(view_tq2.shape(), &[256]);
+        assert_eq!(view_tq2.num_elements(), 256);
+        assert_eq!(view_tq2.offset(), 54);
+        assert_eq!(view_tq2.byte_len(), 66);
+        // SAFETY: 54 is strictly within backing buffer length 120.
+        let expected_tq2_ptr = unsafe { backing.as_ptr().add(54) };
+        assert_eq!(view_tq2.as_bytes().as_ptr(), expected_tq2_ptr);
+
+        // 3. Out-of-bounds by exactly 1 byte
+        let oob_tq1 = TensorView::from_bytes(
+            "blk.0.attn_q.weight",
+            QuantType::TQ1_0,
+            &[256],
+            67, // 67 + 54 = 121 > 120
+            &backing,
+        );
+        assert_eq!(
+            oob_tq1,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "blk.0.attn_q.weight".to_owned(),
+                offset: 67,
+                byte_len: 54,
+                buffer_len: 120,
+                reason: "tensor range [67..121] exceeds backing buffer length 120".to_owned(),
+            })
+        );
+
+        let oob_tq2 = TensorView::from_bytes(
+            "blk.0.attn_k.weight",
+            QuantType::TQ2_0,
+            &[256],
+            55, // 55 + 66 = 121 > 120
+            &backing,
+        );
+        assert_eq!(
+            oob_tq2,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "blk.0.attn_k.weight".to_owned(),
+                offset: 55,
+                byte_len: 66,
+                buffer_len: 120,
+                reason: "tensor range [55..121] exceeds backing buffer length 120".to_owned(),
+            })
+        );
+
+        // 4. Empty shape rejected
+        let empty_shape = TensorView::from_bytes("empty", QuantType::TQ1_0, &[], 0, &backing);
+        assert_eq!(
+            empty_shape,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "empty".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 120,
+                reason: "tensor shape must contain at least one dimension".to_owned(),
+            })
+        );
+
+        // 5. Zero dimension rejected
+        let zero_dim = TensorView::from_bytes("zero", QuantType::TQ1_0, &[256, 0], 0, &backing);
+        assert_eq!(
+            zero_dim,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "zero".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 120,
+                reason: "tensor shape dimensions must be non-zero".to_owned(),
+            })
+        );
+
+        // 6. Non-block-divisible shape rejected
+        let unaligned_shape =
+            TensorView::from_bytes("unaligned", QuantType::TQ1_0, &[250], 0, &backing);
+        assert_eq!(
+            unaligned_shape,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "unaligned".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 120,
+                reason: "element count 250 is not divisible by TQ1_0 block size 256".to_owned(),
+            })
+        );
+
+        // 7. Offset overflow rejected
+        let of_offset = TensorView::from_bytes(
+            "of_offset",
+            QuantType::TQ1_0,
+            &[256],
+            usize::MAX - 20,
+            &backing,
+        );
+        assert_eq!(
+            of_offset,
+            Err(K3Error::TensorBoundsError {
+                tensor_name: "of_offset".to_owned(),
+                offset: usize::MAX - 20,
+                byte_len: 54,
+                buffer_len: 120,
+                reason: "tensor offset + byte_len overflowed usize".to_owned(),
+            })
+        );
+
+        // 8. Zero scale buffer (all 0x00 bytes) accepts cleanly without division by zero
+        let zero_scale_backing = vec![0x00_u8; 66];
+        let view_zero = TensorView::from_bytes(
+            "zero_scale",
+            QuantType::TQ2_0,
+            &[256],
+            0,
+            &zero_scale_backing,
+        )
+        .expect("all-zero / zero-scale buffer is accepted as valid tensor bytes");
+        assert_eq!(view_zero.byte_len(), 66);
+        assert_eq!(view_zero.as_bytes()[0], 0);
+
+        // 9. Zero-copy slice_rows on 2D TQ1_0 matrix: 4 rows of 256 elements = 4 * 54 = 216 bytes
+        let mut matrix_backing = vec![0x11_u8; 216];
+        matrix_backing[108..].fill(0x22);
+
+        let view_matrix_tq1 = TensorView::from_bytes(
+            "blk.0.attn_qkv.weight",
+            QuantType::TQ1_0,
+            &[256, 4],
+            0,
+            &matrix_backing,
+        )
+        .expect("valid 2D matrix");
+
+        // Slice rows 0..2 (first partition: 512 elements, 108 bytes)
+        let slice_q = view_matrix_tq1
+            .slice_rows(0, 2)
+            .expect("slice 0..2 succeeds");
+        assert_eq!(slice_q.shape(), &[256, 2]);
+        assert_eq!(slice_q.num_elements(), 512);
+        assert_eq!(slice_q.offset(), 0);
+        assert_eq!(slice_q.byte_len(), 108);
+        assert_eq!(slice_q.as_bytes()[0], 0x11);
+
+        // Slice rows 2..2 (second partition: 512 elements, 108 bytes at offset 108)
+        let slice_kv = view_matrix_tq1
+            .slice_rows(2, 2)
+            .expect("slice 2..2 succeeds");
+        assert_eq!(slice_kv.shape(), &[256, 2]);
+        assert_eq!(slice_kv.num_elements(), 512);
+        assert_eq!(slice_kv.offset(), 108);
+        assert_eq!(slice_kv.byte_len(), 108);
+        assert_eq!(slice_kv.as_bytes()[0], 0x22);
+
+        // Slice 0 rows
+        let slice_zero = view_matrix_tq1
+            .slice_rows(1, 0)
+            .expect("0-row slice succeeds");
+        assert_eq!(slice_zero.shape(), &[256, 0]);
+        assert_eq!(slice_zero.num_elements(), 0);
+        assert_eq!(slice_zero.byte_len(), 0);
+        assert_eq!(slice_zero.offset(), 54);
+
+        // Row range overflow rejection
+        let err_oob_rows = view_matrix_tq1.slice_rows(3, 2).unwrap_err();
+        assert!(matches!(err_oob_rows, K3Error::TensorBoundsError { .. }));
+        assert!(
+            err_oob_rows
+                .to_string()
+                .contains("exceeds tensor row count 4")
+        );
+
+        // Column unaligned rejection in slice_rows:
+        // [128, 2] has total 256 elements (so calculate_bounds succeeds),
+        // but row length 128 is not divisible by block size 256!
+        let unaligned_col_backing = vec![0u8; 1000];
+        let view_unaligned_cols = TensorView::from_bytes(
+            "unaligned_cols",
+            QuantType::TQ1_0,
+            &[128, 2],
+            0,
+            &unaligned_col_backing,
+        )
+        .expect("total elements 256 divides 256");
+        let err_align = view_unaligned_cols.slice_rows(0, 1).unwrap_err();
+        assert_eq!(
+            err_align,
+            K3Error::TensorBoundsError {
+                tensor_name: "unaligned_cols".to_owned(),
+                offset: 0,
+                byte_len: 54,
+                buffer_len: 54,
+                reason: "tensor row length 128 is not divisible by TQ1_0 block size 256".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_tq1_0_and_tq2_0_quant_type() {
+        // 1. Trait conformance: Copy, Clone, PartialEq, Eq
+        let tq1_a = QuantType::TQ1_0;
+        let tq1_b = tq1_a;
+        assert_eq!(tq1_a, tq1_b);
+        assert_ne!(QuantType::TQ1_0, QuantType::TQ2_0);
+
+        // 2. Hash trait: Works as key in HashSet and HashMap
+        let mut set = HashSet::new();
+        assert!(set.insert(QuantType::TQ1_0));
+        assert!(set.insert(QuantType::TQ2_0));
+        assert!(!set.insert(QuantType::TQ1_0));
+        assert_eq!(set.len(), 2);
+
+        let mut map = HashMap::new();
+        map.insert(QuantType::TQ1_0, "1.58-bit ternary");
+        map.insert(QuantType::TQ2_0, "2-bit ternary");
+        assert_eq!(map.get(&QuantType::TQ1_0), Some(&"1.58-bit ternary"));
+        assert_eq!(map.get(&QuantType::TQ2_0), Some(&"2-bit ternary"));
+
+        // 3. Exhaustive GGUF type ID mapping verification
+        let expected_mappings = [
+            (0, Some(QuantType::F32)),
+            (1, Some(QuantType::F16)),
+            (2, Some(QuantType::Q4_0)),
+            (8, Some(QuantType::Q8_0)),
+            (12, Some(QuantType::Q4_K_M)),
+            (14, Some(QuantType::Q6_K)),
+            (30, Some(QuantType::BF16)),
+            (34, Some(QuantType::TQ1_0)),
+            (35, Some(QuantType::TQ2_0)),
+            (3, None),
+            (4, None),
+            (31, None),
+            (33, None),
+            (36, None),
+            (999, None),
+        ];
+        for (id, expected) in expected_mappings {
+            assert_eq!(
+                QuantType::from_gguf_type_id(id),
+                expected,
+                "ID {id} mapping mismatch"
+            );
+        }
+
+        // 4. Multi-block scaling linearity loop (1..=16 blocks)
+        for n_blocks in 1..=16 {
+            let num_elements = n_blocks * 256;
+            let tq1_bytes = QuantType::TQ1_0
+                .storage_bytes("loop", num_elements)
+                .unwrap();
+            let tq2_bytes = QuantType::TQ2_0
+                .storage_bytes("loop", num_elements)
+                .unwrap();
+            assert_eq!(tq1_bytes, n_blocks * 54);
+            assert_eq!(tq2_bytes, n_blocks * 66);
+        }
+
+        // 5. Non-divisible remainder rejections across various non-zero deltas
+        for delta in [1, 7, 15, 31, 63, 127, 255] {
+            let num_elements = 256 + delta;
+            assert!(matches!(
+                QuantType::TQ1_0.storage_bytes("rem", num_elements),
+                Err(K3Error::TensorBoundsError { .. })
+            ));
+            assert!(matches!(
+                QuantType::TQ2_0.storage_bytes("rem", num_elements),
+                Err(K3Error::TensorBoundsError { .. })
+            ));
+        }
+
+        // 6. Bits per weight verification (mathematical properties)
+        // TQ1_0: 54 bytes = 432 bits for 256 elements = 1.6875 bpw (1.58-bit ternary + 16-bit f16 scale)
+        #[allow(clippy::cast_precision_loss)]
+        let tq1_bpw =
+            (QuantType::TQ1_0.block_bytes() * 8) as f64 / QuantType::TQ1_0.block_elements() as f64;
+        assert!((tq1_bpw - 1.6875).abs() < 1e-6);
+
+        // TQ2_0: 66 bytes = 528 bits for 256 elements = 2.0625 bpw (2-bit ternary + 16-bit f16 scale)
+        #[allow(clippy::cast_precision_loss)]
+        let tq2_bpw =
+            (QuantType::TQ2_0.block_bytes() * 8) as f64 / QuantType::TQ2_0.block_elements() as f64;
+        assert!((tq2_bpw - 2.0625).abs() < 1e-6);
+    }
 }
