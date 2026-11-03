@@ -751,7 +751,7 @@ fn test_tier3_pairwise_cross_cluster_isolation_x100_vs_a100() {
 
 #[test]
 fn test_tier4_scenario1_full_soc_spacemit_k3_16core_baseline() {
-    // Scenario 1: Standard boot on SpacemiT K3 (pey-wail-deu) with 16 physical cores online (0xFFFF)
+    // Scenario 1: Standard boot on SpacemiT K3 (worker-riscv64) with 16 physical cores online (0xFFFF)
     let cfg = ControlPlaneCapacityConfig::default();
     let res = cfg.resolve_with_online_mask(0xFFFF).expect("16-core SoC");
 
