@@ -143,6 +143,8 @@ mod tests {
         assert_eq!(QuantType::from_gguf_type_id(12), Some(QuantType::Q4_K_M));
         assert_eq!(QuantType::from_gguf_type_id(14), Some(QuantType::Q6_K));
         assert_eq!(QuantType::from_gguf_type_id(30), Some(QuantType::BF16));
+        assert_eq!(QuantType::from_gguf_type_id(34), Some(QuantType::TQ1_0));
+        assert_eq!(QuantType::from_gguf_type_id(35), Some(QuantType::TQ2_0));
         assert_eq!(QuantType::from_gguf_type_id(999), None);
 
         assert_eq!(QuantType::F32.storage_bytes("w", 16).unwrap(), 64);
@@ -152,10 +154,22 @@ mod tests {
         assert_eq!(QuantType::Q8_0.storage_bytes("w", 64).unwrap(), 68);
         assert_eq!(QuantType::Q4_K_M.storage_bytes("w", 512).unwrap(), 288);
         assert_eq!(QuantType::Q6_K.storage_bytes("w", 256).unwrap(), 210);
+        assert_eq!(QuantType::TQ1_0.storage_bytes("w", 256).unwrap(), 54);
+        assert_eq!(QuantType::TQ2_0.storage_bytes("w", 256).unwrap(), 66);
 
         // Unaligned block size must fail
         let unaligned = QuantType::Q4_K_M.storage_bytes("blk.0.wq", 300);
         assert!(matches!(unaligned, Err(K3Error::TensorBoundsError { .. })));
+        let unaligned_tq1 = QuantType::TQ1_0.storage_bytes("blk.0.wq", 300);
+        assert!(matches!(
+            unaligned_tq1,
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+        let unaligned_tq2 = QuantType::TQ2_0.storage_bytes("blk.0.wq", 300);
+        assert!(matches!(
+            unaligned_tq2,
+            Err(K3Error::TensorBoundsError { .. })
+        ));
     }
 
     #[test]
