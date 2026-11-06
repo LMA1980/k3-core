@@ -626,6 +626,302 @@ impl TensorDescriptor {
     }
 }
 
+/// Recurrent KV cache allocation strategy for looped latent-recurrent architectures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoryKvCacheMode {
+    /// Allocate independent physical KV cache slots for each recurrent loop iteration.
+    #[default]
+    PerLoop,
+    /// Collapse recurrent loop iterations onto shared physical KV cache slots.
+    LastLoop,
+}
+
+/// Type alias for [`DoryKvCacheMode`] representing recurrent KV cache allocation strategy.
+pub type RecurrentKvCacheMode = DoryKvCacheMode;
+
+impl DoryKvCacheMode {
+    /// Returns the canonical GGUF metadata string identifier for this cache mode.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::PerLoop => "per_loop",
+            Self::LastLoop => "last_loop",
+        }
+    }
+
+    /// Parses a string slice into [`DoryKvCacheMode`], returning `None` if unrecognized.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        let trimmed = s.trim();
+        if trimmed.eq_ignore_ascii_case("per_loop") || trimmed.eq_ignore_ascii_case("per-loop") {
+            Some(Self::PerLoop)
+        } else if trimmed.eq_ignore_ascii_case("last_loop")
+            || trimmed.eq_ignore_ascii_case("last-loop")
+        {
+            Some(Self::LastLoop)
+        } else {
+            None
+        }
+    }
+
+    /// Parses a string representation into [`DoryKvCacheMode`], returning [`K3Error::CapabilityMismatch`] on error.
+    ///
+    /// # Errors
+    /// Returns [`K3Error::CapabilityMismatch`] if `s` is not a valid KV cache mode.
+    pub fn parse_mode(s: &str) -> Result<Self, K3Error> {
+        Self::parse(s).ok_or_else(|| K3Error::CapabilityMismatch {
+            architecture: "dory".to_owned(),
+            reason: format!(
+                "unknown or invalid recurrent_kv_cache_mode: '{s}', expected 'per_loop' or 'last_loop'"
+            ),
+        })
+    }
+}
+
+impl fmt::Display for DoryKvCacheMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Classification of physical sub-layers in Dory's disaggregated layer pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoryLayerType {
+    /// Sliding-window causal attention sub-layer (`'S'`).
+    SlidingWindowAttention,
+    /// Full / global causal attention sub-layer (`'*'`).
+    FullAttention,
+    /// `SwiGLU` / feed-forward MLP sub-layer (`'-'`).
+    Mlp,
+    /// Unrecognized layer pattern character.
+    Unknown(char),
+}
+
+/// Architecture-specific metadata for NVIDIA Nemotron-Labs Dory looped nGPT models.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DoryMetadata {
+    input_layer_count: u32,
+    recurrent_layer_count: u32,
+    output_layer_count: u32,
+    num_loops: u32,
+    recurrent_kv_cache_mode: DoryKvCacheMode,
+    layer_pattern: String,
+    rope_profile: String,
+    rope_freq_base_2: f32,
+    init_std: f32,
+    alpha_init: f32,
+    gate_init: f32,
+}
+
+impl DoryMetadata {
+    /// Returns the number of initial feed-forward / projection input layers ($N_{\text{input}}$).
+    #[must_use]
+    pub const fn input_layer_count(&self) -> u32 {
+        self.input_layer_count
+    }
+
+    /// Returns the number of physical recurrent sub-layers ($N_{\text{recurrent}}$).
+    #[must_use]
+    pub const fn recurrent_layer_count(&self) -> u32 {
+        self.recurrent_layer_count
+    }
+
+    /// Returns the number of final output sub-layers ($N_{\text{output}}$).
+    #[must_use]
+    pub const fn output_layer_count(&self) -> u32 {
+        self.output_layer_count
+    }
+
+    /// Returns the active number of recurrent loop cycles ($K \ge 1$).
+    #[must_use]
+    pub const fn num_loops(&self) -> u32 {
+        self.num_loops
+    }
+
+    /// Returns the recurrent KV cache mode ([`DoryKvCacheMode::PerLoop`] vs [`DoryKvCacheMode::LastLoop`]).
+    #[must_use]
+    pub const fn recurrent_kv_cache_mode(&self) -> DoryKvCacheMode {
+        self.recurrent_kv_cache_mode
+    }
+
+    /// Returns the recurrent KV cache mode as a static string slice (`"per_loop"` or `"last_loop"`).
+    #[must_use]
+    pub const fn recurrent_kv_cache_mode_str(&self) -> &'static str {
+        self.recurrent_kv_cache_mode.as_str()
+    }
+
+    /// Returns the layer topology pattern string (e.g., `"S-S-S-*-..."`).
+    #[must_use]
+    pub fn layer_pattern(&self) -> &str {
+        &self.layer_pattern
+    }
+
+    /// Returns the `RoPE` profile identifier (e.g., `"dual_theta"` or `"neox"`).
+    #[must_use]
+    pub fn rope_profile(&self) -> &str {
+        &self.rope_profile
+    }
+
+    /// Returns the secondary `RoPE` base frequency constant (theta 2, typically 10,000.0).
+    #[must_use]
+    pub const fn rope_freq_base_2(&self) -> f32 {
+        self.rope_freq_base_2
+    }
+
+    /// Returns the weights initialization standard deviation.
+    #[must_use]
+    pub const fn init_std(&self) -> f32 {
+        self.init_std
+    }
+
+    /// Returns the initial eigen-rate residual interpolation constant ($\alpha_{\text{init}}$).
+    #[must_use]
+    pub const fn alpha_init(&self) -> f32 {
+        self.alpha_init
+    }
+
+    /// Returns the initial attention gate bias / scale constant ($g_{\text{init}}$).
+    #[must_use]
+    pub const fn gate_init(&self) -> f32 {
+        self.gate_init
+    }
+
+    /// Returns the total physical layer count stored in the weight table ($N_{\text{input}} + N_{\text{recurrent}} + N_{\text{output}}$).
+    #[must_use]
+    pub const fn physical_layer_count(&self) -> u32 {
+        self.input_layer_count + self.recurrent_layer_count + self.output_layer_count
+    }
+
+    /// Returns the total physical layer count stored in the weight table.
+    #[must_use]
+    pub const fn total_layer_count(&self) -> u32 {
+        self.physical_layer_count()
+    }
+
+    /// Returns the total physical layer count stored in the weight table.
+    #[must_use]
+    pub const fn total_physical_layers(&self) -> u32 {
+        self.physical_layer_count()
+    }
+
+    /// Returns the total virtual layers executed across all recurrent loops ($N_{\text{input}} + N_{\text{recurrent}} \times K + N_{\text{output}}$).
+    #[must_use]
+    pub const fn effective_layer_count(&self) -> u32 {
+        self.input_layer_count
+            + (self.recurrent_layer_count * self.num_loops)
+            + self.output_layer_count
+    }
+
+    /// Returns the total virtual layers executed across all recurrent loops.
+    #[must_use]
+    pub const fn total_virtual_layers(&self) -> u32 {
+        self.effective_layer_count()
+    }
+
+    /// Returns the virtual layer count for an arbitrary loop count $K$.
+    #[must_use]
+    pub const fn virtual_layer_count(&self, loops: u32) -> u32 {
+        self.input_layer_count + (self.recurrent_layer_count * loops) + self.output_layer_count
+    }
+
+    /// Returns `true` if `physical_layer_idx` belongs to the input segment (`0..input_layer_count`).
+    #[must_use]
+    pub const fn is_input_layer(&self, physical_layer_idx: u32) -> bool {
+        physical_layer_idx < self.input_layer_count
+    }
+
+    /// Returns `true` if `physical_layer_idx` belongs to the recurrent segment.
+    #[must_use]
+    pub const fn is_recurrent_layer(&self, physical_layer_idx: u32) -> bool {
+        physical_layer_idx >= self.input_layer_count
+            && physical_layer_idx < self.input_layer_count + self.recurrent_layer_count
+    }
+
+    /// Returns `true` if `physical_layer_idx` belongs to the output segment.
+    #[must_use]
+    pub const fn is_output_layer(&self, physical_layer_idx: u32) -> bool {
+        physical_layer_idx >= self.input_layer_count + self.recurrent_layer_count
+            && physical_layer_idx < self.physical_layer_count()
+    }
+
+    /// Maps a virtual execution step (`0..effective_layer_count()`) to its physical weight layer index (`0..physical_layer_count()`).
+    #[must_use]
+    pub const fn physical_layer_for_virtual_step(&self, virtual_step: u32) -> Option<u32> {
+        if virtual_step < self.input_layer_count {
+            Some(virtual_step)
+        } else {
+            let recurrent_total = self.recurrent_layer_count * self.num_loops;
+            let recurrent_end = self.input_layer_count + recurrent_total;
+            if virtual_step < recurrent_end {
+                let rec_step = (virtual_step - self.input_layer_count) % self.recurrent_layer_count;
+                Some(self.input_layer_count + rec_step)
+            } else if virtual_step < self.effective_layer_count() {
+                let out_step = virtual_step - recurrent_end;
+                Some(self.input_layer_count + self.recurrent_layer_count + out_step)
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Returns the 0-indexed loop iteration ($0..K$) for a virtual step within the recurrent segment, or `None` if input/output.
+    #[must_use]
+    pub const fn loop_index_for_virtual_step(&self, virtual_step: u32) -> Option<u32> {
+        let recurrent_total = self.recurrent_layer_count * self.num_loops;
+        let recurrent_end = self.input_layer_count + recurrent_total;
+        if virtual_step >= self.input_layer_count && virtual_step < recurrent_end {
+            Some((virtual_step - self.input_layer_count) / self.recurrent_layer_count)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the parsed [`DoryLayerType`] for a physical layer index by consulting `layer_pattern`.
+    #[must_use]
+    pub fn layer_type(&self, physical_layer_idx: u32) -> Option<DoryLayerType> {
+        let idx = usize::try_from(physical_layer_idx).ok()?;
+        self.layer_pattern.chars().nth(idx).map(|c| match c {
+            'S' => DoryLayerType::SlidingWindowAttention,
+            '*' => DoryLayerType::FullAttention,
+            '-' => DoryLayerType::Mlp,
+            other => DoryLayerType::Unknown(other),
+        })
+    }
+
+    /// Returns `true` if `physical_layer_idx` is an attention sub-layer ('S' or '*').
+    #[must_use]
+    pub fn is_attention_layer(&self, physical_layer_idx: u32) -> bool {
+        matches!(
+            self.layer_type(physical_layer_idx),
+            Some(DoryLayerType::SlidingWindowAttention | DoryLayerType::FullAttention)
+        )
+    }
+
+    /// Returns `true` if `physical_layer_idx` is an MLP sub-layer ('-').
+    #[must_use]
+    pub fn is_mlp_layer(&self, physical_layer_idx: u32) -> bool {
+        matches!(
+            self.layer_type(physical_layer_idx),
+            Some(DoryLayerType::Mlp)
+        )
+    }
+}
+
+impl fmt::Display for DoryMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DoryMetadata(input={}, recurrent={}, output={}, loops={}, kv_mode='{}', rope_base_2={})",
+            self.input_layer_count,
+            self.recurrent_layer_count,
+            self.output_layer_count,
+            self.num_loops,
+            self.recurrent_kv_cache_mode.as_str(),
+            self.rope_freq_base_2
+        )
+    }
+}
+
 /// Parsed model hyperparameters and structural metadata from a GGUF v3 file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelMetadata {
@@ -639,6 +935,7 @@ pub struct ModelMetadata {
     tensor_count: usize,
     total_weight_bytes: usize,
     tensors: Vec<TensorDescriptor>,
+    dory: Option<DoryMetadata>,
 }
 
 impl ModelMetadata {
@@ -707,6 +1004,12 @@ impl ModelMetadata {
     pub fn find_tensor(&self, name: &str) -> Option<&TensorDescriptor> {
         self.tensors.iter().find(|t| t.name == name)
     }
+
+    /// Returns the parsed Dory-specific metadata if this model uses the `"dory"` architecture.
+    #[must_use]
+    pub fn dory(&self) -> Option<&DoryMetadata> {
+        self.dory.as_ref()
+    }
 }
 
 struct RawTensorInfo {
@@ -741,6 +1044,7 @@ impl<'a> GgufFile<'a> {
     /// magic number, unsupported version, or malformed key-value structures.
     /// Returns [`K3Error::CapabilityMismatch`] if required architecture keys are missing
     /// or if a tensor uses an unmapped quantization format.
+    #[allow(clippy::too_many_lines)]
     pub fn parse(buffer: &'a [u8]) -> Result<Self, K3Error> {
         let mut cursor = BinaryCursor::new(buffer);
 
@@ -837,6 +1141,15 @@ impl<'a> GgufFile<'a> {
             .and_then(GgufValue::as_usize)
             .unwrap_or(2048);
 
+        let dory = Self::parse_dory_metadata(&architecture, &metadata_map)?;
+
+        let layer_count = if layer_count == 0 {
+            dory.as_ref()
+                .map_or(0, |d| d.physical_layer_count() as usize)
+        } else {
+            layer_count
+        };
+
         // 6. Parse raw tensor info descriptors
         let raw_tensors =
             Self::parse_raw_tensors(&mut cursor, tensor_count, &architecture, buffer.len())?;
@@ -859,6 +1172,7 @@ impl<'a> GgufFile<'a> {
             tensor_count,
             total_weight_bytes: parsed_tensors.total_weight_bytes,
             tensors: parsed_tensors.descriptors,
+            dory,
         };
 
         Ok(Self {
@@ -880,6 +1194,169 @@ impl<'a> GgufFile<'a> {
             metadata_map.insert(key, val);
         }
         Ok(metadata_map)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn parse_dory_metadata(
+        architecture: &str,
+        metadata_map: &BTreeMap<&str, GgufValue<'_>>,
+    ) -> Result<Option<DoryMetadata>, K3Error> {
+        if architecture != "dory" {
+            return Ok(None);
+        }
+
+        let input_layer_count = match metadata_map.get("dory.input_layer_count") {
+            Some(val) => val.as_u32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.input_layer_count must be a non-negative unsigned integer".to_owned(),
+            })?,
+            None => {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "missing required metadata key: dory.input_layer_count".to_owned(),
+                });
+            }
+        };
+
+        let recurrent_layer_count = match metadata_map.get("dory.recurrent_layer_count") {
+            Some(val) => val.as_u32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.recurrent_layer_count must be a non-negative unsigned integer"
+                    .to_owned(),
+            })?,
+            None => {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "missing required metadata key: dory.recurrent_layer_count".to_owned(),
+                });
+            }
+        };
+
+        let output_layer_count = match metadata_map.get("dory.output_layer_count") {
+            Some(val) => val.as_u32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.output_layer_count must be a non-negative unsigned integer"
+                    .to_owned(),
+            })?,
+            None => {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "missing required metadata key: dory.output_layer_count".to_owned(),
+                });
+            }
+        };
+
+        let layer_pattern = match metadata_map.get("dory.layer_pattern") {
+            Some(val) => {
+                let s = val.as_str().ok_or_else(|| K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "dory.layer_pattern must be a string".to_owned(),
+                })?;
+                if s.is_empty() {
+                    return Err(K3Error::CapabilityMismatch {
+                        architecture: "dory".to_owned(),
+                        reason: "dory.layer_pattern must not be empty".to_owned(),
+                    });
+                }
+                s.to_owned()
+            }
+            None => {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "missing required metadata key: dory.layer_pattern".to_owned(),
+                });
+            }
+        };
+
+        let num_loops = match metadata_map.get("dory.num_loops") {
+            Some(val) => {
+                let n = val.as_u32().ok_or_else(|| K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "dory.num_loops must be a positive integer".to_owned(),
+                })?;
+                if n == 0 {
+                    return Err(K3Error::CapabilityMismatch {
+                        architecture: "dory".to_owned(),
+                        reason: "dory.num_loops must be greater than zero".to_owned(),
+                    });
+                }
+                n
+            }
+            None => 1,
+        };
+
+        let recurrent_kv_cache_mode = match metadata_map.get("dory.recurrent_kv_cache_mode") {
+            Some(val) => {
+                let s = val.as_str().ok_or_else(|| K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: "dory.recurrent_kv_cache_mode must be a string".to_owned(),
+                })?;
+                DoryKvCacheMode::parse_mode(s)?
+            }
+            None => DoryKvCacheMode::PerLoop,
+        };
+
+        let rope_profile = match metadata_map.get("dory.rope.profile") {
+            Some(val) => {
+                if let Some(s) = val.as_str() {
+                    s.to_owned()
+                } else if let Some(u) = val.as_u32() {
+                    format!("profile_{u}")
+                } else {
+                    return Err(K3Error::CapabilityMismatch {
+                        architecture: "dory".to_owned(),
+                        reason: "dory.rope.profile must be a string or integer".to_owned(),
+                    });
+                }
+            }
+            None => "dual_theta".to_owned(),
+        };
+
+        let rope_freq_base_2 = match metadata_map.get("dory.rope.freq_base_2") {
+            Some(val) => val.as_f32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.rope.freq_base_2 must be a float".to_owned(),
+            })?,
+            None => 10000.0,
+        };
+
+        let init_std = match metadata_map.get("dory.init_std") {
+            Some(val) => val.as_f32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.init_std must be a float".to_owned(),
+            })?,
+            None => 0.02,
+        };
+
+        let alpha_init = match metadata_map.get("dory.alpha_init") {
+            Some(val) => val.as_f32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.alpha_init must be a float".to_owned(),
+            })?,
+            None => 1.0,
+        };
+
+        let gate_init = match metadata_map.get("dory.gate_init") {
+            Some(val) => val.as_f32().ok_or_else(|| K3Error::CapabilityMismatch {
+                architecture: "dory".to_owned(),
+                reason: "dory.gate_init must be a float".to_owned(),
+            })?,
+            None => 0.0,
+        };
+
+        Ok(Some(DoryMetadata {
+            input_layer_count,
+            recurrent_layer_count,
+            output_layer_count,
+            num_loops,
+            recurrent_kv_cache_mode,
+            layer_pattern,
+            rope_profile,
+            rope_freq_base_2,
+            init_std,
+            alpha_init,
+            gate_init,
+        }))
     }
 
     fn parse_raw_tensors(
@@ -1071,6 +1548,12 @@ impl<'a> GgufFile<'a> {
     #[must_use]
     pub fn architecture(&self) -> &str {
         self.metadata.architecture()
+    }
+
+    /// Returns the parsed Dory-specific metadata if this model uses the `"dory"` architecture.
+    #[must_use]
+    pub fn dory(&self) -> Option<&DoryMetadata> {
+        self.metadata.dory()
     }
 
     /// Returns the raw backing byte slice.
@@ -1474,7 +1957,7 @@ pub mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::test_helpers::create_synthetic_gguf_v3;
+    use super::test_helpers::{create_synthetic_gguf_v3, create_synthetic_gguf_v3_with_kvs};
     use super::*;
 
     #[test]
@@ -1642,5 +2125,109 @@ mod tests {
 
         // 6. Nonexistent tensor lookup
         assert!(gguf.tensor("nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_parse_dory_metadata_unit() {
+        let layer_pattern =
+            "S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-S-S-S-*-";
+        let extra_kvs = [
+            ("dory.block_count", GgufValue::Uint32(0)),
+            ("dory.input_layer_count", GgufValue::Uint32(16)),
+            ("dory.recurrent_layer_count", GgufValue::Uint32(40)),
+            ("dory.output_layer_count", GgufValue::Uint32(16)),
+            ("dory.num_loops", GgufValue::Uint32(2)),
+            (
+                "dory.recurrent_kv_cache_mode",
+                GgufValue::String("per_loop"),
+            ),
+            ("dory.layer_pattern", GgufValue::String(layer_pattern)),
+            ("dory.rope.profile", GgufValue::String("neox")),
+            ("dory.rope.freq_base_2", GgufValue::Float32(10000.0)),
+            ("dory.init_std", GgufValue::Float32(0.02)),
+            ("dory.alpha_init", GgufValue::Float32(0.05)),
+            ("dory.gate_init", GgufValue::Float32(0.0)),
+        ];
+
+        let bytes = create_synthetic_gguf_v3_with_kvs("dory", 32, &extra_kvs, &[]);
+        let gguf = GgufFile::parse(&bytes).expect("parse dory gguf v3");
+        let meta = gguf.metadata();
+
+        assert_eq!(meta.architecture(), "dory");
+        assert_eq!(meta.layer_count(), 72);
+
+        let dory = meta.dory().expect("dory metadata must be present");
+        assert_eq!(dory.input_layer_count(), 16);
+        assert_eq!(dory.recurrent_layer_count(), 40);
+        assert_eq!(dory.output_layer_count(), 16);
+        assert_eq!(dory.num_loops(), 2);
+        assert_eq!(dory.recurrent_kv_cache_mode(), DoryKvCacheMode::PerLoop);
+        assert_eq!(dory.recurrent_kv_cache_mode_str(), "per_loop");
+        assert_eq!(dory.rope_profile(), "neox");
+        assert!((dory.rope_freq_base_2() - 10000.0).abs() < 1e-4);
+        assert!((dory.init_std() - 0.02).abs() < 1e-4);
+        assert!((dory.alpha_init() - 0.05).abs() < 1e-4);
+        assert!((dory.gate_init() - 0.0).abs() < 1e-4);
+
+        // Structural layer count invariants
+        assert_eq!(dory.physical_layer_count(), 72);
+        assert_eq!(dory.total_physical_layers(), 72);
+        assert_eq!(dory.total_layer_count(), 72);
+        assert_eq!(dory.effective_layer_count(), 112); // 16 + (40 * 2) + 16
+        assert_eq!(dory.total_virtual_layers(), 112);
+        assert_eq!(dory.virtual_layer_count(4), 192); // 16 + (40 * 4) + 16
+
+        // Segment classification
+        assert!(dory.is_input_layer(0));
+        assert!(dory.is_input_layer(15));
+        assert!(!dory.is_input_layer(16));
+
+        assert!(dory.is_recurrent_layer(16));
+        assert!(dory.is_recurrent_layer(55));
+        assert!(!dory.is_recurrent_layer(56));
+
+        assert!(dory.is_output_layer(56));
+        assert!(dory.is_output_layer(71));
+        assert!(!dory.is_output_layer(72));
+
+        // Virtual-to-physical loop mapping
+        assert_eq!(dory.physical_layer_for_virtual_step(0), Some(0));
+        assert_eq!(dory.physical_layer_for_virtual_step(15), Some(15));
+        assert_eq!(dory.physical_layer_for_virtual_step(16), Some(16)); // loop 0
+        assert_eq!(dory.physical_layer_for_virtual_step(55), Some(55)); // loop 0
+        assert_eq!(dory.physical_layer_for_virtual_step(56), Some(16)); // loop 1
+        assert_eq!(dory.physical_layer_for_virtual_step(95), Some(55)); // loop 1
+        assert_eq!(dory.physical_layer_for_virtual_step(96), Some(56)); // output
+        assert_eq!(dory.physical_layer_for_virtual_step(111), Some(71)); // output
+        assert_eq!(dory.physical_layer_for_virtual_step(112), None);
+
+        // Recurrent loop indexing
+        assert_eq!(dory.loop_index_for_virtual_step(5), None);
+        assert_eq!(dory.loop_index_for_virtual_step(16), Some(0));
+        assert_eq!(dory.loop_index_for_virtual_step(56), Some(1));
+        assert_eq!(dory.loop_index_for_virtual_step(96), None);
+
+        // Layer type classification
+        assert_eq!(
+            dory.layer_type(0),
+            Some(DoryLayerType::SlidingWindowAttention)
+        );
+        assert_eq!(dory.layer_type(1), Some(DoryLayerType::Mlp));
+        assert_eq!(dory.layer_type(6), Some(DoryLayerType::FullAttention));
+        assert!(dory.is_attention_layer(0));
+        assert!(dory.is_mlp_layer(1));
+
+        // Display check
+        let display_str = format!("{dory}");
+        assert!(display_str.contains("DoryMetadata"));
+        assert!(display_str.contains("kv_mode='per_loop'"));
+    }
+
+    #[test]
+    fn test_non_dory_metadata_is_none() {
+        let bytes = create_synthetic_gguf_v3("synthetic", 32, &[]);
+        let gguf = GgufFile::parse(&bytes).expect("parse synthetic gguf");
+        assert!(gguf.metadata().dory().is_none());
+        assert!(gguf.dory().is_none());
     }
 }

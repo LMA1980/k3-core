@@ -23,8 +23,9 @@ pub use error::K3Error;
 #[doc(hidden)]
 pub use gguf::test_helpers;
 pub use gguf::{
-    DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION_V3, GgufArray, GgufFile, GgufMetadataValueType,
-    GgufValue, ModelMetadata, TensorDescriptor, align_up,
+    DEFAULT_ALIGNMENT, DoryKvCacheMode, DoryLayerType, DoryMetadata, GGUF_MAGIC, GGUF_VERSION_V3,
+    GgufArray, GgufFile, GgufMetadataValueType, GgufValue, ModelMetadata, RecurrentKvCacheMode,
+    TensorDescriptor, align_up,
 };
 pub use ipc::{
     ArenaHeader, ArenaOptions, ArenaSocketExt, IpcError, IpcMessage, KvBlockMeta, KvBlockTag,
