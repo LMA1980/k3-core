@@ -39,7 +39,7 @@ pub use profile::{
     QuantizationInfo, TuningAdvisory, TuningProfile,
 };
 pub use recipe::{ArchRecipe, ExecutionContext};
-pub use tensor::{ModelWeights, QuantType, TensorShape, TensorView};
+pub use tensor::{BlockQ5_K, ModelWeights, QuantType, TensorShape, TensorView};
 
 #[cfg(test)]
 mod tests {
@@ -141,6 +141,7 @@ mod tests {
         assert_eq!(QuantType::from_gguf_type_id(2), Some(QuantType::Q4_0));
         assert_eq!(QuantType::from_gguf_type_id(8), Some(QuantType::Q8_0));
         assert_eq!(QuantType::from_gguf_type_id(12), Some(QuantType::Q4_K_M));
+        assert_eq!(QuantType::from_gguf_type_id(13), Some(QuantType::Q5_K));
         assert_eq!(QuantType::from_gguf_type_id(14), Some(QuantType::Q6_K));
         assert_eq!(QuantType::from_gguf_type_id(30), Some(QuantType::BF16));
         assert_eq!(QuantType::from_gguf_type_id(34), Some(QuantType::TQ1_0));
@@ -153,6 +154,7 @@ mod tests {
         assert_eq!(QuantType::Q4_0.storage_bytes("w", 64).unwrap(), 36);
         assert_eq!(QuantType::Q8_0.storage_bytes("w", 64).unwrap(), 68);
         assert_eq!(QuantType::Q4_K_M.storage_bytes("w", 512).unwrap(), 288);
+        assert_eq!(QuantType::Q5_K.storage_bytes("w", 256).unwrap(), 176);
         assert_eq!(QuantType::Q6_K.storage_bytes("w", 256).unwrap(), 210);
         assert_eq!(QuantType::TQ1_0.storage_bytes("w", 256).unwrap(), 54);
         assert_eq!(QuantType::TQ2_0.storage_bytes("w", 256).unwrap(), 66);
@@ -160,6 +162,11 @@ mod tests {
         // Unaligned block size must fail
         let unaligned = QuantType::Q4_K_M.storage_bytes("blk.0.wq", 300);
         assert!(matches!(unaligned, Err(K3Error::TensorBoundsError { .. })));
+        let unaligned_q5 = QuantType::Q5_K.storage_bytes("blk.0.wq", 300);
+        assert!(matches!(
+            unaligned_q5,
+            Err(K3Error::TensorBoundsError { .. })
+        ));
         let unaligned_tq1 = QuantType::TQ1_0.storage_bytes("blk.0.wq", 300);
         assert!(matches!(
             unaligned_tq1,

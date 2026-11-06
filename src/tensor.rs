@@ -20,6 +20,8 @@ pub enum QuantType {
     Q8_0,
     /// 4-bit K-quant super-blocks of 256 elements (`ggml_type = 12`, primary format for `Q4_K_M`).
     Q4_K_M,
+    /// 5-bit K-quant super-blocks of 256 elements (`ggml_type = 13`, used by `Q5_K_M` and `Q5_K_S`).
+    Q5_K,
     /// 6-bit K-quant super-blocks of 256 elements (`ggml_type = 14`, used by mixed `Q4_K_M` tensors).
     Q6_K,
     /// 1.58-bit base-3 ternary quantization in blocks of 256 elements (`ggml_type = 34`).
@@ -39,6 +41,7 @@ impl QuantType {
             Self::Q4_0 => "Q4_0",
             Self::Q8_0 => "Q8_0",
             Self::Q4_K_M => "Q4_K_M",
+            Self::Q5_K => "Q5_K",
             Self::Q6_K => "Q6_K",
             Self::TQ1_0 => "TQ1_0",
             Self::TQ2_0 => "TQ2_0",
@@ -54,6 +57,7 @@ impl QuantType {
             2 => Some(Self::Q4_0),
             8 => Some(Self::Q8_0),
             12 => Some(Self::Q4_K_M),
+            13 => Some(Self::Q5_K),
             14 => Some(Self::Q6_K),
             30 => Some(Self::BF16),
             34 => Some(Self::TQ1_0),
@@ -71,6 +75,7 @@ impl QuantType {
             Self::Q4_0 => 2,
             Self::Q8_0 => 8,
             Self::Q4_K_M => 12,
+            Self::Q5_K => 13,
             Self::Q6_K => 14,
             Self::BF16 => 30,
             Self::TQ1_0 => 34,
@@ -84,14 +89,26 @@ impl QuantType {
         self.as_str()
     }
 
+    /// Returns the GGUF v3 `ggml_type` integer ID (alias for [`Self::ggml_type_id`]).
+    #[must_use]
+    pub const fn ggml_type(&self) -> u32 {
+        self.ggml_type_id()
+    }
+
     /// Returns the number of scalar elements per quantization block.
     #[must_use]
     pub const fn block_elements(&self) -> usize {
         match self {
             Self::F32 | Self::F16 | Self::BF16 => 1,
             Self::Q4_0 | Self::Q8_0 => 32,
-            Self::Q4_K_M | Self::Q6_K | Self::TQ1_0 | Self::TQ2_0 => 256,
+            Self::Q4_K_M | Self::Q5_K | Self::Q6_K | Self::TQ1_0 | Self::TQ2_0 => 256,
         }
+    }
+
+    /// Returns the number of scalar elements per quantization block (alias for [`Self::block_elements`]).
+    #[must_use]
+    pub const fn block_size(&self) -> usize {
+        self.block_elements()
     }
 
     /// Returns the exact storage size in bytes of a single quantization block.
@@ -103,9 +120,32 @@ impl QuantType {
             Self::Q4_0 => 18,
             Self::Q8_0 => 34,
             Self::Q4_K_M => 144,
+            Self::Q5_K => 176,
             Self::Q6_K => 210,
             Self::TQ1_0 => 54,
             Self::TQ2_0 => 66,
+        }
+    }
+
+    /// Returns the exact storage size in bytes of a single quantization block (alias for [`Self::block_bytes`]).
+    #[must_use]
+    pub const fn type_size(&self) -> usize {
+        self.block_bytes()
+    }
+
+    /// Returns true if this format is quantized (i.e. not F32, F16, or BF16).
+    #[must_use]
+    pub const fn is_quantized(&self) -> bool {
+        !matches!(self, Self::F32 | Self::F16 | Self::BF16)
+    }
+
+    /// Returns the required memory alignment in bytes for this format.
+    #[must_use]
+    pub const fn alignment(&self) -> usize {
+        match self {
+            Self::F32 => 4,
+            Self::F16 | Self::BF16 | Self::Q4_0 | Self::Q8_0 => 2,
+            Self::Q4_K_M | Self::Q5_K | Self::Q6_K | Self::TQ1_0 | Self::TQ2_0 => 16,
         }
     }
 
@@ -159,6 +199,30 @@ impl fmt::Display for QuantType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// Super-block layout for `Q5_K` quantization (GGML v3 / ADR-017).
+///
+/// Quantizes 256 scalar elements into 176 bytes with 16-byte alignment.
+/// Total storage layout (2 + 2 + 12 + 32 + 128 = 176 bytes):
+/// - `d`: IEEE 754 half-precision (`f16`) super-block scale factor (bytes 0..2)
+/// - `dmin`: IEEE 754 half-precision (`f16`) super-block min factor (bytes 2..4)
+/// - `scales`: 12 bytes packed 6-bit scales and minimums for 16 sub-blocks (bytes 4..16)
+/// - `qh`: 32 bytes high 1-bit quants for 256 elements (bytes 16..48)
+/// - `qs`: 128 bytes low 4-bit quants for 256 elements (bytes 48..176)
+#[repr(C, align(16))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockQ5_K {
+    /// Super-block scale for quantized scales (IEEE 754 half-precision `f16` bit pattern).
+    pub d: u16,
+    /// Super-block scale for quantized mins (IEEE 754 half-precision `f16` bit pattern).
+    pub dmin: u16,
+    /// 16 sub-block scales and mins packed into 12 bytes using 6 bits each.
+    pub scales: [u8; 12],
+    /// High 5th bit for all 256 quantized elements (256 bits = 32 bytes).
+    pub qh: [u8; 32],
+    /// Low 4 bits for all 256 quantized elements (256 nibbles = 128 bytes).
+    pub qs: [u8; 128],
 }
 
 /// Storage for tensor shape dimensions supporting borrowed slices and inline shapes.
@@ -977,6 +1041,7 @@ mod tests {
             (2, Some(QuantType::Q4_0)),
             (8, Some(QuantType::Q8_0)),
             (12, Some(QuantType::Q4_K_M)),
+            (13, Some(QuantType::Q5_K)),
             (14, Some(QuantType::Q6_K)),
             (30, Some(QuantType::BF16)),
             (34, Some(QuantType::TQ1_0)),
@@ -1034,5 +1099,88 @@ mod tests {
         let tq2_bpw =
             (QuantType::TQ2_0.block_bytes() * 8) as f64 / QuantType::TQ2_0.block_elements() as f64;
         assert!((tq2_bpw - 2.0625).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_q5_k_quant_descriptor() {
+        let q = QuantType::Q5_K;
+
+        // 1. Variant, Display, and String Identifiers
+        assert_eq!(q.as_str(), "Q5_K");
+        assert_eq!(q.type_name(), "Q5_K");
+        assert_eq!(format!("{q}"), "Q5_K");
+
+        // 2. GGUF type ID mapping
+        assert_eq!(QuantType::from_gguf_type_id(13), Some(QuantType::Q5_K));
+        assert_eq!(q.ggml_type_id(), 13);
+        assert_eq!(q.ggml_type(), 13);
+
+        // 3. Block elements, storage sizes, and helpers
+        assert_eq!(q.block_elements(), 256);
+        assert_eq!(q.block_size(), 256);
+        assert_eq!(q.block_bytes(), 176);
+        assert_eq!(q.type_size(), 176);
+        assert!(q.is_quantized());
+        assert_eq!(q.alignment(), 16);
+
+        // 4. Exact block multiples storage calculations
+        assert_eq!(q.storage_bytes("w", 256).unwrap(), 176);
+        assert_eq!(q.storage_bytes("w", 512).unwrap(), 352);
+        assert_eq!(q.storage_bytes("w", 1024).unwrap(), 704);
+        assert_eq!(q.storage_bytes("w", 2048).unwrap(), 1408);
+
+        // 5. Misaligned element count rejections
+        let err_unaligned = q.storage_bytes("unaligned", 255).unwrap_err();
+        assert_eq!(
+            err_unaligned,
+            K3Error::TensorBoundsError {
+                tensor_name: "unaligned".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "element count 255 is not divisible by Q5_K block size 256".to_owned(),
+            }
+        );
+
+        // 6. Zero elements rejection
+        let err_zero = q.storage_bytes("empty", 0).unwrap_err();
+        assert_eq!(
+            err_zero,
+            K3Error::TensorBoundsError {
+                tensor_name: "empty".to_owned(),
+                offset: 0,
+                byte_len: 0,
+                buffer_len: 0,
+                reason: "tensor element count must be greater than zero".to_owned(),
+            }
+        );
+
+        // 7. Struct memory layout & alignment
+        assert_eq!(size_of::<BlockQ5_K>(), 176);
+        assert_eq!(align_of::<BlockQ5_K>(), 16);
+        assert_eq!(core::mem::offset_of!(BlockQ5_K, d), 0);
+        assert_eq!(core::mem::offset_of!(BlockQ5_K, dmin), 2);
+        assert_eq!(core::mem::offset_of!(BlockQ5_K, scales), 4);
+        assert_eq!(core::mem::offset_of!(BlockQ5_K, qh), 16);
+        assert_eq!(core::mem::offset_of!(BlockQ5_K, qs), 48);
+
+        // 8. 2D TensorView row slicing
+        let mut backing = vec![0xAA_u8; 704];
+        for r in 0..4_usize {
+            backing[r * 176] = u8::try_from(r).expect("r in 0..4 fits u8");
+        }
+        let view = TensorView::from_bytes("matrix_q5k", QuantType::Q5_K, &[256, 4], 0, &backing)
+            .expect("valid 2D Q5_K matrix");
+        for r in 0..4_usize {
+            let slice = view.slice_rows(r, 1).expect("valid row slice");
+            assert_eq!(slice.shape(), &[256, 1]);
+            assert_eq!(slice.num_elements(), 256);
+            assert_eq!(slice.offset(), r * 176);
+            assert_eq!(slice.byte_len(), 176);
+            assert_eq!(
+                slice.as_bytes()[0],
+                u8::try_from(r).expect("r in 0..4 fits u8")
+            );
+        }
     }
 }

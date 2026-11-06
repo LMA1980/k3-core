@@ -35,6 +35,7 @@ fn test_adversarial_gguf_type_id_mapping_exhaustive() {
         (QuantType::Q4_0, 2, "Q4_0", 32, 18),
         (QuantType::Q8_0, 8, "Q8_0", 32, 34),
         (QuantType::Q4_K_M, 12, "Q4_K_M", 256, 144),
+        (QuantType::Q5_K, 13, "Q5_K", 256, 176),
         (QuantType::Q6_K, 14, "Q6_K", 256, 210),
         (QuantType::BF16, 30, "BF16", 1, 2),
         (QuantType::TQ1_0, 34, "TQ1_0", 256, 54),

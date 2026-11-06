@@ -1272,6 +1272,7 @@ pub mod test_helpers {
                 QuantType::Q4_0 => 2,
                 QuantType::Q8_0 => 8,
                 QuantType::Q4_K_M => 12,
+                QuantType::Q5_K => 13,
                 QuantType::Q6_K => 14,
                 QuantType::BF16 => 30,
                 QuantType::TQ1_0 => 34,
