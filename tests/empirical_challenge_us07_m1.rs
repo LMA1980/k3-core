@@ -191,6 +191,8 @@ fn test_challenge_model_profile_sanitizes_unprofiled_flag_on_tuning() {
         profile_status: ProfileStatus::Unprofiled, // Sneaky unprofiled status!
         unprofiled: true,                          // Sneaky unprofiled flag!
         advisory_notice: Some("Malicious advisory".to_owned()),
+        recurrent_loops: None,
+        recurrent_kv_cache_mode: None,
     };
 
     model.apply_tuning(malicious_tuning);

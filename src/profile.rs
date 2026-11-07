@@ -514,6 +514,12 @@ pub struct TuningProfile {
     /// Actionable advisory notice when running unprofiled (cleared once profiled per ADR-031).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub advisory_notice: Option<String>,
+    /// Optional operator override for Dory recurrent loop iterations (`1..=4`; defaults to GGUF metadata when `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrent_loops: Option<u32>,
+    /// Optional operator override for Dory recurrent KV cache mode (`"per_loop"` or `"last_loop"`; defaults to GGUF metadata when `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrent_kv_cache_mode: Option<String>,
 }
 
 impl Default for TuningProfile {
@@ -552,7 +558,71 @@ impl TuningProfile {
             profile_status: ProfileStatus::Unprofiled,
             unprofiled: true,
             advisory_notice: Some(CONSERVATIVE_TUNING_ADVISORY.to_owned()),
+            recurrent_loops: None,
+            recurrent_kv_cache_mode: None,
         }
+    }
+
+    /// Returns a copy of this profile configured with Dory recurrent loop and KV cache mode overrides.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`K3Error::CapabilityMismatch`] if `recurrent_loops` is outside `1..=4` or
+    /// `recurrent_kv_cache_mode` is neither `"per_loop"` nor `"last_loop"`.
+    pub fn with_dory_overrides(
+        mut self,
+        recurrent_loops: Option<u32>,
+        recurrent_kv_cache_mode: Option<String>,
+    ) -> Result<Self, K3Error> {
+        if let Some(loops) = recurrent_loops {
+            if !(1..=4).contains(&loops) {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: format!("TuningProfile recurrent_loops must be in 1..=4, got {loops}"),
+                });
+            }
+        }
+        if let Some(ref mode) = recurrent_kv_cache_mode {
+            if mode != "per_loop" && mode != "last_loop" {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: format!(
+                        "TuningProfile recurrent_kv_cache_mode must be 'per_loop' or 'last_loop', got '{mode}'"
+                    ),
+                });
+            }
+        }
+        self.recurrent_loops = recurrent_loops;
+        self.recurrent_kv_cache_mode = recurrent_kv_cache_mode;
+        Ok(self)
+    }
+
+    /// Validates optional Dory recurrent loop and KV cache mode overrides on this profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`K3Error::CapabilityMismatch`] if `recurrent_loops` is outside `1..=4` or
+    /// `recurrent_kv_cache_mode` is neither `"per_loop"` nor `"last_loop"`.
+    pub fn validate_dory_overrides(&self) -> Result<(), K3Error> {
+        if let Some(loops) = self.recurrent_loops {
+            if !(1..=4).contains(&loops) {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: format!("TuningProfile recurrent_loops must be in 1..=4, got {loops}"),
+                });
+            }
+        }
+        if let Some(ref mode) = self.recurrent_kv_cache_mode {
+            if mode != "per_loop" && mode != "last_loop" {
+                return Err(K3Error::CapabilityMismatch {
+                    architecture: "dory".to_owned(),
+                    reason: format!(
+                        "TuningProfile recurrent_kv_cache_mode must be 'per_loop' or 'last_loop', got '{mode}'"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Returns `true` if this profile is unprofiled.
