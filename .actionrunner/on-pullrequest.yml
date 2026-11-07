@@ -1,5 +1,5 @@
 version: "2"
-name: "k3-core Pull Request Verification Pipeline"
+name: "jero-core Pull Request Verification Pipeline"
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,4 +37,4 @@ stages:
     tags: ["k3"]
     depends_on: ["coverage-check"]
     threads: 2
-    run: "cargo +nightly miri test -p k3-core --lib"
+    run: "cargo +nightly miri test -p jero-core --lib"
