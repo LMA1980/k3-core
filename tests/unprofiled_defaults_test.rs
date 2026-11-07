@@ -7,7 +7,7 @@
 //!   operational audit event generation, and operator profile transition).
 //! - Crate-boundary contracts: JSON serialization, parsing, error diagnostics, and topology bounds.
 
-use k3_core::{
+use jero_core::{
     A100_CLUSTER_MASK, CONSERVATIVE_DEFAULT_A100_CORES, CONSERVATIVE_DEFAULT_N_CTX,
     CONSERVATIVE_DEFAULT_X100_CORES, CONSERVATIVE_TUNING_ADVISORY, CONSTRAINED_TEST_N_CTX,
     ComputePool, DEFAULT_ACTIVE_CONTROL_MASK, DEFAULT_X100_COMPUTE_CAP_MASK, K3Error, ModelEntry,

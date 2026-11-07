@@ -1,11 +1,11 @@
 [package]
-name = "k3-core"
+name = "jero-core"
 description = "Core traits, zero-copy tensor views, and diagnostics for the SpacemiT K3 AI platform"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
-repository = "https://github.com/LMA1980/k3-core"
+repository = "https://github.com/LMA1980/jero-core"
 
 [dependencies]
 arrow-array = "59.3.1"

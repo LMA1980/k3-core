@@ -1,4 +1,4 @@
-use k3_core::{QuantType, TensorView};
+use jero_core::{QuantType, TensorView};
 use std::time::Instant;
 
 fn main() {

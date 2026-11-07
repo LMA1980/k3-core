@@ -9,7 +9,7 @@
     clippy::undocumented_unsafe_blocks
 )]
 
-use k3_core::{K3Error, QuantType, TensorView};
+use jero_core::{K3Error, QuantType, TensorView};
 
 #[test]
 fn test_empirical_arithmetic_overflow_extremes() {

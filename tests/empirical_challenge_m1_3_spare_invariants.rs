@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use k3_core::affinity::*;
+use jero_core::affinity::*;
 
 /// Invariant Suite 1: Custom spare mask across ALL 256 online topologies with default active cores (2).
 ///

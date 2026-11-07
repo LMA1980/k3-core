@@ -22,8 +22,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use k3_core::affinity::{ActiveControlRotator, ControlPlaneCapacityConfig};
-use k3_core::error::K3Error;
+use jero_core::affinity::{ActiveControlRotator, ControlPlaneCapacityConfig};
+use jero_core::error::K3Error;
 
 /// Challenge 1: High-concurrency round-robin fairness on `next_active_control_core()`.
 ///

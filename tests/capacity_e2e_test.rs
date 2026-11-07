@@ -20,9 +20,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
 
-use k3_core::ipc::protocol::StatusCode;
+use jero_core::ipc::protocol::StatusCode;
 
-use k3_core::affinity::{
+use jero_core::affinity::{
     A100_CLUSTER_MASK, ControlPlaneCapacityConfig, DEFAULT_A100_MAX_COMPUTE_CORES,
     DEFAULT_ACTIVE_CONTROL_MASK, DEFAULT_SPARE_RECOVERY_MASK, DEFAULT_X100_COMPUTE_CAP_MASK,
     DEFAULT_X100_MAX_COMPUTE_CORES, X100_CLUSTER_MASK,

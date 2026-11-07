@@ -11,11 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use k3_core::K3Error;
-use k3_core::ipc::layout::{
+use jero_core::K3Error;
+use jero_core::ipc::layout::{
     ArenaHeader, OutputSlabHeader, SLAB_STATUS_WRITTEN, TokenInputSlotHeader,
 };
-use k3_core::ipc::{
+use jero_core::ipc::{
     ArenaOptions, DEFAULT_LIMIT_MEMLOCK_BYTES, IpcError, SharedMemoryArena, ShmTensorViews,
     wrap_floats_as_float32_array, wrap_tokens_as_uint32_array,
 };

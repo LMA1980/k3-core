@@ -9,8 +9,8 @@
 use std::sync::Arc;
 use std::thread;
 
-use k3_core::affinity::*;
-use k3_core::error::K3Error;
+use jero_core::affinity::*;
+use jero_core::error::K3Error;
 
 /// Verification 1: Exhaustive iteration over all 256 8-bit online masks with default configuration.
 #[test]
