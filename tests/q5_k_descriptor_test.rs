@@ -14,7 +14,7 @@
 use core::mem::{align_of, offset_of, size_of};
 use std::collections::{HashMap, HashSet};
 
-use k3_core::{
+use jero_core::{
     BlockQ5_K as CoreBlockQ5_K, GgufFile, K3Error, ModelWeights, QuantType, TensorView, align_up,
     test_helpers::create_synthetic_gguf_v3,
 };

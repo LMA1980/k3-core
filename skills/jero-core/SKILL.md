@@ -1,9 +1,9 @@
 ---
-name: k3-core-invariants
-description: "Implement ArchRecipe traits, zero-copy TensorView, GGUF v3 parsing, SpacemiT K3 cluster affinity, and SCM_RIGHTS FD passing with k3-core."
+name: jero-core
+description: "Implement ArchRecipe traits, zero-copy TensorView, GGUF v3 parsing, SpacemiT K3 cluster affinity, and SCM_RIGHTS FD passing with jero-core."
 ---
 
-# `k3-core` Hardware Topology, Zero-Copy Tensor & IPC Invariants
+# `jero-core` Hardware Topology, Zero-Copy Tensor & IPC Invariants
 
 ## 1. SpacemiT K3 Canonical Cluster Mapping & `/proc/set_ai_thread`
 

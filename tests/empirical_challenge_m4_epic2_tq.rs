@@ -19,8 +19,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use k3_core::test_helpers::create_synthetic_gguf_v3;
-use k3_core::{GgufFile, K3Error, ModelWeights, QuantType, TensorView};
+use jero_core::test_helpers::create_synthetic_gguf_v3;
+use jero_core::{GgufFile, K3Error, ModelWeights, QuantType, TensorView};
 
 // ============================================================================
 // 1. Exhaustive GGUF Type ID Mapping and Roundtrip Verification

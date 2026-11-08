@@ -1,4 +1,4 @@
-//! `k3-core`: Foundational traits, zero-copy tensor views, single-prompt execution context,
+//! `jero-core`: Foundational traits, zero-copy tensor views, single-prompt execution context,
 //! and structured diagnostic errors for the `SpacemiT` K3 AI runtime.
 
 pub mod affinity;

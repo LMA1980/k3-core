@@ -7,15 +7,15 @@
     clippy::undocumented_unsafe_blocks
 )]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 use std::thread;
 
-use k3_core::K3Error;
-use k3_core::ipc::layout::{
+use jero_core::K3Error;
+use jero_core::ipc::layout::{
     ArenaHeader, OutputSlabHeader, SLAB_STATUS_WRITTEN, TokenInputSlotHeader,
 };
-use k3_core::ipc::{
+use jero_core::ipc::{
     ArenaOptions, DEFAULT_LIMIT_MEMLOCK_BYTES, IpcError, SharedMemoryArena, ShmTensorViews,
     wrap_floats_as_float32_array, wrap_tokens_as_uint32_array,
 };
@@ -430,6 +430,7 @@ fn test_concurrent_multi_mapping_stress() {
     let arena = SharedMemoryArena::create("stress_arena", 65536).expect("create stress arena");
     let arena_arc = Arc::new(arena);
     let stop = Arc::new(AtomicBool::new(false));
+    let start_barrier = Arc::new(Barrier::new(5));
 
     // Spawn 4 reader threads continuously validating data coherence
     let mut handles = Vec::new();
@@ -437,6 +438,7 @@ fn test_concurrent_multi_mapping_stress() {
         let dup_fd = arena_arc.duplicate_fd().expect("dup fd for thread");
         let len = arena_arc.len();
         let stop_clone = Arc::clone(&stop);
+        let barrier_clone = Arc::clone(&start_barrier);
 
         handles.push(thread::spawn(move || {
             let reader_arena = SharedMemoryArena::from_existing_fd(
@@ -446,8 +448,10 @@ fn test_concurrent_multi_mapping_stress() {
                 true,
             )
             .expect("reader arena");
+            barrier_clone.wait();
             let mut read_cycles = 0;
-            while !stop_clone.load(Ordering::Relaxed) && read_cycles < 20_000 {
+            while read_cycles == 0 || (!stop_clone.load(Ordering::Acquire) && read_cycles < 20_000)
+            {
                 let slice = reader_arena.slice(0, 8).expect("reader slice");
                 let val = u64::from_le_bytes(slice.try_into().expect("u64 slice"));
                 // Verify value is a valid counter state (sequential writes from writer)
@@ -461,10 +465,12 @@ fn test_concurrent_multi_mapping_stress() {
     // Writer thread updating counter in primary arena
     let dup_fd_w = arena_arc.duplicate_fd().expect("dup writer fd");
     let len_w = arena_arc.len();
+    let barrier_w = Arc::clone(&start_barrier);
     let writer_handle = thread::spawn(move || {
         let mut writer_arena =
             SharedMemoryArena::from_existing_fd(dup_fd_w, len_w, "writer", false)
                 .expect("writer arena");
+        barrier_w.wait();
         for step in 1_u64..=10_000_u64 {
             let slice = writer_arena.slice_mut(0, 8).expect("writer slice");
             slice.copy_from_slice(&step.to_le_bytes());
@@ -472,7 +478,7 @@ fn test_concurrent_multi_mapping_stress() {
     });
 
     writer_handle.join().expect("writer joined");
-    stop.store(true, Ordering::Relaxed);
+    stop.store(true, Ordering::Release);
 
     for handle in handles {
         let cycles = handle.join().expect("reader joined");

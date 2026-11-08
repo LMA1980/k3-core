@@ -25,8 +25,8 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use k3_core::ipc::IpcError;
-use k3_core::ipc::protocol::{
+use jero_core::ipc::IpcError;
+use jero_core::ipc::protocol::{
     AllocateArenaRequest, AllocateArenaResponse, AttachArenaCommand, DeallocateArenaRequest,
     DeallocateArenaResponse, FLAG_FD_ATTACHED, FRAME_HEADER_LEN, FRAME_MAGIC, ForwardPassCommand,
     ForwardPassCompleted, GetArenaFdRequest, GetArenaFdResponse, IpcFrameHeader, IpcMessage,

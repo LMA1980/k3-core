@@ -1,16 +1,16 @@
-# k3-core
+# jero-core
 
 <p align="center">
   <a href="https://hook.lma1980.duckdns.org/jobs">
-    <img src="https://hook.lma1980.duckdns.org/cards/LMA1980/k3-core/card.svg" alt="k3-core Factory Scorecard" width="520"/>
+    <img src="https://hook.lma1980.duckdns.org/cards/LMA1980/jero-core/card.svg" alt="jero-core Factory Scorecard" width="520"/>
   </a>
 </p>
 
 <p align="center">
-  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/status.svg" alt="CI Status"/></a>
-  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/score.svg" alt="Quality Score"/></a>
-  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/coverage.svg" alt="Coverage"/></a>
-  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/k3-core/benchmark.svg" alt="Benchmark"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/jero-core/status.svg" alt="CI Status"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/jero-core/score.svg" alt="Quality Score"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/jero-core/coverage.svg" alt="Coverage"/></a>
+  <a href="https://hook.lma1980.duckdns.org/jobs"><img src="https://hook.lma1980.duckdns.org/badges/LMA1980/jero-core/benchmark.svg" alt="Benchmark"/></a>
 </p>
 
 ---
@@ -18,7 +18,7 @@
 Core traits, zero-copy tensor views, single-prompt execution context, and structured diagnostics for the SpacemiT K3 AI platform.
 
 ## Overview
-`k3-core` defines the foundational abstractions shared across `k3-engine`, architecture recipe crates (`arch-*`), and compute kernel crates (`kernels-*`):
+`jero-core` defines the foundational abstractions shared across `jero-engine`, architecture recipe crates (`arch-*`), and compute kernel crates (`kernels-*`):
 - **Quantization & Tensor Views**: `QuantType` (`F32`, `F16`, `BF16`, `Q4_0`, `Q8_0`, `Q4_K_M`, `Q6_K`), zero-copy `TensorView` with checked bounds calculation, and the `ModelWeights` trait.
 - **Cycle-Exclusive Execution**: Single-prompt `ExecutionContext` and `ArchRecipe` (`prefill_step` / `decode_step`) enforcing strict prompt exclusivity (ADR-005) and fixed context bounds (ADR-027).
 - **Structured Diagnostics**: `K3Error` covering capability mismatch (ADR-023), insufficient lockable memory (ADR-037), context length exceeded (ADR-027), core affinity errors, and tensor bounds errors.

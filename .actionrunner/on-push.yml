@@ -1,5 +1,5 @@
 version: "2"
-name: "k3-core Factory Pipeline: Hygiene, Tests, Coverage & Benchmarks"
+name: "jero-core Factory Pipeline: Hygiene, Tests, Coverage & Benchmarks"
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,11 +37,11 @@ stages:
     tags: ["k3"]
     depends_on: ["coverage-check"]
     threads: 2
-    run: "cargo +nightly miri test -p k3-core --lib"
+    run: "cargo +nightly miri test -p jero-core --lib"
 
   - id: bench-run
     name: "Execute Native Micro-Benchmarks (cargo bench)"
     tags: ["k3"]
     depends_on: ["coverage-check"]
     threads: 2
-    run: "cargo bench --package k3-core || true"
+    run: "cargo bench --package jero-core || true"

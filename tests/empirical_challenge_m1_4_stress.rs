@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
 
-use k3_core::affinity::*;
-use k3_core::error::K3Error;
+use jero_core::affinity::*;
+use jero_core::error::K3Error;
 
 #[test]
 fn test_stress_arithmetic_overflow_extremes() {

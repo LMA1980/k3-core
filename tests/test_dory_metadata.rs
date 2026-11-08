@@ -16,8 +16,8 @@
     clippy::undocumented_unsafe_blocks
 )]
 
-use k3_core::test_helpers::create_synthetic_gguf_v3_with_kvs;
-use k3_core::{DoryKvCacheMode, DoryMetadata, GgufFile, GgufValue, K3Error};
+use jero_core::test_helpers::create_synthetic_gguf_v3_with_kvs;
+use jero_core::{DoryKvCacheMode, DoryMetadata, GgufFile, GgufValue, K3Error};
 
 // ============================================================================
 // 1. Golden Path: Complete `dory.*` Metadata Parsing

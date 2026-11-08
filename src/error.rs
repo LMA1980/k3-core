@@ -1,4 +1,4 @@
-//! Structured diagnostic error types for `k3-core` and `k3-engine`.
+//! Structured diagnostic error types for `jero-core` and `k3-engine`.
 
 use core::fmt;
 
