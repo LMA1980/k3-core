@@ -9,6 +9,7 @@ use crate::tensor::{ModelWeights, QuantType};
 pub struct ExecutionContext<'a> {
     prompt_tokens: &'a [u32],
     decode_token: Option<u32>,
+    jump_forward_tokens: Option<&'a [u32]>,
     position: usize,
     n_ctx: usize,
     logits: &'a mut [f32],
@@ -36,11 +37,33 @@ impl<'a> ExecutionContext<'a> {
         Ok(Self {
             prompt_tokens,
             decode_token: None,
+            jump_forward_tokens: None,
             position: 0,
             n_ctx,
             logits,
             kv_cache,
         })
+    }
+
+    /// Sets the starting KV sequence position cursor for this [`ExecutionContext`].
+    ///
+    /// # Errors
+    /// Returns [`K3Error::ContextLengthExceeded`] if `position + self.prompt_tokens.len() > self.n_ctx`.
+    pub fn with_position(mut self, position: usize) -> Result<Self, K3Error> {
+        let end_pos = position.checked_add(self.prompt_tokens.len()).ok_or(
+            K3Error::ContextLengthExceeded {
+                requested_tokens: usize::MAX,
+                max_context_tokens: self.n_ctx,
+            },
+        )?;
+        if end_pos > self.n_ctx {
+            return Err(K3Error::ContextLengthExceeded {
+                requested_tokens: end_pos,
+                max_context_tokens: self.n_ctx,
+            });
+        }
+        self.position = position;
+        Ok(self)
     }
 
     /// Returns the input prompt token sequence for the single active evaluation slot.
@@ -89,6 +112,17 @@ impl<'a> ExecutionContext<'a> {
         self.kv_cache
     }
 
+    /// Returns the staged forced token sequence for a jump-forward prefill burst, if any.
+    #[must_use]
+    pub const fn jump_forward_tokens(&self) -> Option<&'a [u32]> {
+        self.jump_forward_tokens
+    }
+
+    /// Returns simultaneous mutable views of the logits and KV cache buffers.
+    pub fn buffers_mut(&mut self) -> (&mut [f32], &mut [f32]) {
+        (self.logits, self.kv_cache)
+    }
+
     /// Stages the next generated token for a single-token decode pass, verifying `position < n_ctx`.
     ///
     /// # Errors
@@ -101,8 +135,36 @@ impl<'a> ExecutionContext<'a> {
                 max_context_tokens: self.n_ctx,
             });
         }
+        self.jump_forward_tokens = None;
         self.decode_token = Some(token_id);
         Ok(())
+    }
+
+    /// Stages a deterministic `forced_tokens` slice for an atomic jump-forward prefill burst.
+    ///
+    /// # Errors
+    /// Returns [`K3Error::ContextLengthExceeded`] if `self.position + forced_tokens.len() > self.n_ctx`.
+    pub fn prepare_jump_forward(&mut self, forced_tokens: &'a [u32]) -> Result<(), K3Error> {
+        let next_pos = self.position.checked_add(forced_tokens.len()).ok_or(
+            K3Error::ContextLengthExceeded {
+                requested_tokens: usize::MAX,
+                max_context_tokens: self.n_ctx,
+            },
+        )?;
+        if next_pos > self.n_ctx {
+            return Err(K3Error::ContextLengthExceeded {
+                requested_tokens: next_pos,
+                max_context_tokens: self.n_ctx,
+            });
+        }
+        self.decode_token = None;
+        self.jump_forward_tokens = Some(forced_tokens);
+        Ok(())
+    }
+
+    /// Clears any staged jump-forward forced token sequence.
+    pub fn clear_jump_forward(&mut self) {
+        self.jump_forward_tokens = None;
     }
 
     /// Advances the KV sequence position cursor by `token_count` tokens after a forward step.
@@ -146,8 +208,31 @@ pub trait ArchRecipe: Send + Sync + core::fmt::Debug {
         &["native"]
     }
 
+    /// Returns `true` if this recipe maintains an autoregressive KV cache across decode steps.
+    ///
+    /// Zero-KV encoder architectures (such as `ModernBERT`, `DeBERTa-v3`, and `bert`) override
+    /// this to return `false` so admission and arena setup skip KV page reservation.
+    fn requires_kv_cache(&self) -> bool {
+        true
+    }
+
     /// Returns `true` if this recipe and its linked kernel backend support `quant`.
     fn supports_quant(&self, quant: QuantType) -> bool;
+
+    /// Executes a single-pass classification or logit-harvest pass over [`ExecutionContext::prompt_tokens`].
+    ///
+    /// Defaults to delegating to [`ArchRecipe::prefill_step`]. Encoder-only recipes override this
+    /// to compute bidirectional embeddings, pooling, and classification logits without a KV cache.
+    ///
+    /// # Errors
+    /// Returns [`K3Error`] if weight lookup, buffer validation, or forward execution fails.
+    fn forward_classify(
+        &self,
+        ctx: &mut ExecutionContext<'_>,
+        weights: &dyn ModelWeights,
+    ) -> Result<(), K3Error> {
+        self.prefill_step(ctx, weights)
+    }
 
     /// Executes the prompt prefill forward pass over [`ExecutionContext::prompt_tokens`]
     /// for a single prompt (ADR-005), populating the KV cache and writing next-token logits.
