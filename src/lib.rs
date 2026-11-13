@@ -469,4 +469,148 @@ mod tests {
         assert_eq!(slice_zero.num_elements(), 0);
         assert_eq!(slice_zero.offset(), 144);
     }
+
+    #[derive(Debug)]
+    struct DummyZeroKvRecipe;
+
+    impl ArchRecipe for DummyZeroKvRecipe {
+        fn architecture_id(&self) -> &'static str {
+            "modernbert"
+        }
+
+        fn requires_kv_cache(&self) -> bool {
+            false
+        }
+
+        fn supports_quant(&self, quant: QuantType) -> bool {
+            matches!(quant, QuantType::F32 | QuantType::F16 | QuantType::Q8_0)
+        }
+
+        fn prefill_step(
+            &self,
+            _ctx: &mut ExecutionContext<'_>,
+            _weights: &dyn ModelWeights,
+        ) -> Result<(), K3Error> {
+            Err(K3Error::CapabilityMismatch {
+                architecture: self.architecture_id().to_owned(),
+                reason: "zero-KV encoder does not perform autoregressive prefill".to_owned(),
+            })
+        }
+
+        fn decode_step(
+            &self,
+            _ctx: &mut ExecutionContext<'_>,
+            _weights: &dyn ModelWeights,
+        ) -> Result<(), K3Error> {
+            Err(K3Error::CapabilityMismatch {
+                architecture: self.architecture_id().to_owned(),
+                reason: "zero-KV encoder does not perform autoregressive decode".to_owned(),
+            })
+        }
+
+        fn forward_classify(
+            &self,
+            ctx: &mut ExecutionContext<'_>,
+            _weights: &dyn ModelWeights,
+        ) -> Result<(), K3Error> {
+            let prompt_len = ctx.prompt_tokens().len();
+            assert_eq!(ctx.kv_cache(), [0.0_f32; 0]);
+            #[allow(clippy::cast_precision_loss)]
+            let score = prompt_len as f32;
+            if let Some(first) = ctx.logits_mut().first_mut() {
+                *first = score;
+            }
+            if let Some(second) = ctx.logits_mut().get_mut(1) {
+                *second = -score;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_zero_kv_recipe_trait() {
+        let backing = vec![0u8; 352];
+        let weights = DummyWeights { buffer: &backing };
+
+        let default_recipe = DummyRecipe;
+        assert!(default_recipe.requires_kv_cache());
+        let mut default_logits = [0.0_f32; 4];
+        let mut default_kv = [0.0_f32; 16];
+        let mut default_ctx =
+            ExecutionContext::new(&[10, 20], 8, &mut default_logits, &mut default_kv)
+                .expect("default context");
+        default_recipe
+            .forward_classify(&mut default_ctx, &weights)
+            .expect("default forward_classify delegates to prefill_step");
+        assert_eq!(default_ctx.position(), 2);
+        assert!((default_logits[0] - 1.0).abs() <= f32::EPSILON);
+
+        let zero_kv_recipe = DummyZeroKvRecipe;
+        assert!(!zero_kv_recipe.requires_kv_cache());
+        let mut classify_logits = [0.0_f32; 2];
+        let mut empty_kv: [f32; 0] = [];
+        let mut zero_kv_ctx =
+            ExecutionContext::new(&[101, 202, 102], 16, &mut classify_logits, &mut empty_kv)
+                .expect("zero-kv context");
+        zero_kv_recipe
+            .forward_classify(&mut zero_kv_ctx, &weights)
+            .expect("zero-kv classify succeeds");
+        assert_eq!(zero_kv_ctx.position(), 0);
+        assert!((classify_logits[0] - 3.0).abs() <= f32::EPSILON);
+        assert!((classify_logits[1] + 3.0).abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn test_arch_recipe_zero_kv_hooks() {
+        let backing = vec![0u8; 352];
+        let weights = DummyWeights { buffer: &backing };
+        let zero_kv_recipe = DummyZeroKvRecipe;
+        assert!(!zero_kv_recipe.requires_kv_cache());
+
+        let mut logits = [0.0_f32; 4];
+        let mut kv_cache = [0.0_f32; 8];
+        let mut ctx = ExecutionContext::new(&[1, 2], 6, &mut logits, &mut kv_cache)
+            .expect("valid context")
+            .with_position(2)
+            .expect("valid starting position");
+        assert_eq!(ctx.position(), 2);
+        assert!(ctx.jump_forward_tokens().is_none());
+
+        let forced = [30, 31, 32];
+        ctx.prepare_jump_forward(&forced)
+            .expect("forced burst fits in n_ctx=6 from position=2");
+        assert_eq!(ctx.jump_forward_tokens(), Some(&forced[..]));
+
+        let overflow_forced = [40, 41, 42, 43, 44];
+        let err = ctx
+            .prepare_jump_forward(&overflow_forced)
+            .expect_err("forced burst past n_ctx must fail");
+        assert!(matches!(err, K3Error::ContextLengthExceeded { .. }));
+
+        ctx.prepare_decode(7)
+            .expect("prepare_decode succeeds within n_ctx");
+        assert!(ctx.jump_forward_tokens().is_none());
+        assert_eq!(ctx.decode_token(), Some(7));
+
+        ctx.prepare_jump_forward(&forced)
+            .expect("re-staging forced burst succeeds");
+        ctx.clear_jump_forward();
+        assert!(ctx.jump_forward_tokens().is_none());
+
+        let mut classify_logits = [0.0_f32; 2];
+        let mut empty_kv: [f32; 0] = [];
+        let mut classify_ctx =
+            ExecutionContext::new(&[5, 6], 4, &mut classify_logits, &mut empty_kv)
+                .expect("zero-kv classify context");
+        zero_kv_recipe
+            .forward_classify(&mut classify_ctx, &weights)
+            .expect("forward_classify executes with zero KV bytes");
+        assert!((classify_logits[0] - 2.0).abs() <= f32::EPSILON);
+
+        let pos_err = ExecutionContext::new(&[1, 2, 3], 4, &mut logits, &mut kv_cache)
+            .expect("context")
+            .with_position(2)
+            .expect_err("position + prompt_len > n_ctx must fail");
+        assert!(matches!(pos_err, K3Error::ContextLengthExceeded { .. }));
+    }
 }
