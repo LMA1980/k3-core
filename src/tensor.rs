@@ -589,6 +589,148 @@ impl<'a> TensorView<'a> {
         })
     }
 
+    /// Zero-copy slices a single expert matrix `[cols, rows]` from a 3D stacked `MoE` tensor.
+    ///
+    /// Supports both standard GGUF column-major 3D ordering (`[cols, rows, num_experts]`) and
+    /// row-major synthetic ordering (`[num_experts, rows, cols]` when `shape[2] != num_experts`).
+    ///
+    /// # Errors
+    /// Returns [`K3Error::TensorBoundsError`] if:
+    /// - `self.shape().len() != 3`,
+    /// - `num_experts == 0` or `expert_idx >= num_experts`,
+    /// - neither outer axis equals `num_experts`,
+    /// - `cols` is zero or not divisible by `self.quant().block_elements()`,
+    /// - or the backing byte slice does not cleanly partition into `num_experts` equal slices.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "validates 3D axis ordering, block alignment, and checked expert byte offsets"
+    )]
+    pub fn slice_expert(
+        &self,
+        expert_idx: usize,
+        num_experts: usize,
+    ) -> Result<TensorView<'a>, K3Error> {
+        let shape = self.shape();
+        if shape.len() != 3 {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "slice_expert requires a 3D stacked MoE tensor, found {} dimension(s)",
+                    shape.len()
+                ),
+            });
+        }
+        if num_experts == 0 {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: "num_experts must be greater than zero".to_owned(),
+            });
+        }
+        if expert_idx >= num_experts {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "expert index {expert_idx} out of bounds for {num_experts} expert(s)"
+                ),
+            });
+        }
+
+        let (cols, rows) = if shape[2] == num_experts {
+            (shape[0], shape[1])
+        } else if shape[0] == num_experts {
+            (shape[2], shape[1])
+        } else {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "3D tensor shape {shape:?} does not match num_experts={num_experts}"
+                ),
+            });
+        };
+
+        let block_elems = self.quant.block_elements();
+        if cols == 0 || rows == 0 || cols % block_elems != 0 {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "expert matrix [{cols}, {rows}] must be non-zero and cols divisible by {quant} block size {block_elems}",
+                    quant = self.quant.as_str()
+                ),
+            });
+        }
+
+        let num_elements = cols
+            .checked_mul(rows)
+            .ok_or_else(|| K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: self.data.len(),
+                buffer_len: self.data.len(),
+                reason: "expert element count overflowed usize".to_owned(),
+            })?;
+        let expert_bytes = self.quant.storage_bytes(self.name, num_elements)?;
+        let expected_total_bytes =
+            expert_bytes
+                .checked_mul(num_experts)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "stacked expert byte size overflowed usize".to_owned(),
+                })?;
+        if expected_total_bytes > self.data.len() {
+            return Err(K3Error::TensorBoundsError {
+                tensor_name: self.name.to_owned(),
+                offset: self.offset,
+                byte_len: expected_total_bytes,
+                buffer_len: self.data.len(),
+                reason: format!(
+                    "stacked expert payload requires {expected_total_bytes} bytes, buffer has {}",
+                    self.data.len()
+                ),
+            });
+        }
+
+        let start_byte = expert_idx * expert_bytes;
+        let end_byte = start_byte + expert_bytes;
+        let new_offset =
+            self.offset
+                .checked_add(start_byte)
+                .ok_or_else(|| K3Error::TensorBoundsError {
+                    tensor_name: self.name.to_owned(),
+                    offset: self.offset,
+                    byte_len: self.data.len(),
+                    buffer_len: self.data.len(),
+                    reason: "expert slice byte offset overflowed usize".to_owned(),
+                })?;
+
+        let new_dims = [cols, rows, 0, 0, 0, 0, 0, 0];
+        Ok(TensorView {
+            name: self.name,
+            quant: self.quant,
+            shape: TensorShape::Inline(new_dims, 2),
+            num_elements,
+            offset: new_offset,
+            data: &self.data[start_byte..end_byte],
+        })
+    }
+
     /// Returns the total number of scalar elements in the tensor.
     #[must_use]
     pub const fn num_elements(&self) -> usize {
@@ -1182,5 +1324,104 @@ mod tests {
                 u8::try_from(r).expect("r in 0..4 fits u8")
             );
         }
+    }
+
+    #[test]
+    fn test_tensor_view_slice_expert() {
+        // 1. Standard GGUF 3D stacked MoE order: [cols=32, rows=2, num_experts=4] in Q8_0
+        // Each expert: 64 elements = 2 Q8_0 blocks = 68 bytes.
+        let num_experts = 4_usize;
+        let expert_bytes_q8 = 68_usize;
+        let mut backing_q8 = vec![0_u8; num_experts * expert_bytes_q8];
+        for e in 0..num_experts {
+            backing_q8[e * expert_bytes_q8..((e + 1) * expert_bytes_q8)]
+                .fill(u8::try_from(e + 10).expect("fits u8"));
+        }
+
+        let stacked_q8 = TensorView::from_bytes(
+            "blk.0.ffn_gate_exps.weight",
+            QuantType::Q8_0,
+            &[32, 2, 4],
+            0,
+            &backing_q8,
+        )
+        .expect("valid 3D stacked Q8_0 view");
+
+        for e in 0..num_experts {
+            let slice = stacked_q8
+                .slice_expert(e, num_experts)
+                .expect("valid expert slice");
+            assert_eq!(slice.shape(), &[32, 2]);
+            assert_eq!(slice.quant(), QuantType::Q8_0);
+            assert_eq!(slice.offset(), e * expert_bytes_q8);
+            assert_eq!(slice.byte_len(), expert_bytes_q8);
+            // SAFETY: e * expert_bytes_q8 is strictly within backing_q8.
+            let expected_ptr = unsafe { backing_q8.as_ptr().add(e * expert_bytes_q8) };
+            assert_eq!(slice.as_bytes().as_ptr(), expected_ptr);
+            assert!(
+                slice
+                    .as_bytes()
+                    .iter()
+                    .all(|&b| b == u8::try_from(e + 10).expect("fits u8"))
+            );
+        }
+
+        // 2. Q4_K_M stacked MoE order: [cols=256, rows=3, num_experts=2]
+        let expert_bytes_q4k = 3 * 144_usize;
+        let mut backing_q4k = vec![0_u8; 2 * expert_bytes_q4k];
+        backing_q4k[expert_bytes_q4k..].fill(0x55);
+        let stacked_q4k = TensorView::from_bytes(
+            "blk.1.ffn_down_exps.weight",
+            QuantType::Q4_K_M,
+            &[256, 3, 2],
+            0,
+            &backing_q4k,
+        )
+        .expect("valid 3D stacked Q4_K_M view");
+        let exp1 = stacked_q4k
+            .slice_expert(1, 2)
+            .expect("slice Q4_K_M expert 1");
+        assert_eq!(exp1.shape(), &[256, 3]);
+        assert_eq!(exp1.offset(), expert_bytes_q4k);
+        assert!(exp1.as_bytes().iter().all(|&b| b == 0x55));
+
+        // 3. Synthetic [num_experts, rows, cols] fallback: [3, 2, 32]
+        let expert_bytes_f32 = 2 * 32 * 4_usize;
+        let mut backing_f32 = vec![0_u8; 3 * expert_bytes_f32];
+        backing_f32[2 * expert_bytes_f32..].fill(0x7F);
+        let stacked_row_major = TensorView::from_bytes(
+            "blk.0.ffn_up_exps.weight",
+            QuantType::F32,
+            &[3, 2, 32],
+            0,
+            &backing_f32,
+        )
+        .expect("valid row-major 3D stacked view");
+        let exp2 = stacked_row_major
+            .slice_expert(2, 3)
+            .expect("slice expert 2");
+        assert_eq!(exp2.shape(), &[32, 2]);
+        assert_eq!(exp2.offset(), 2 * expert_bytes_f32);
+        assert!(exp2.as_bytes().iter().all(|&b| b == 0x7F));
+
+        // 4. Out-of-bounds and invalid shape rejections
+        assert!(matches!(
+            stacked_q8.slice_expert(4, 4),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+        assert!(matches!(
+            stacked_q8.slice_expert(0, 0),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+        assert!(matches!(
+            stacked_q8.slice_expert(0, 8),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
+
+        let view_2d = stacked_q8.slice_expert(0, 4).expect("2D slice");
+        assert!(matches!(
+            view_2d.slice_expert(0, 1),
+            Err(K3Error::TensorBoundsError { .. })
+        ));
     }
 }
