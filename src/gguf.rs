@@ -4,7 +4,7 @@
 //! capability verification (ADR-017, ADR-023, ADR-027, ADR-037).
 
 use core::fmt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::K3Error;
 use crate::tensor::{ModelWeights, QuantType, TensorView};
@@ -936,6 +936,14 @@ pub struct ModelMetadata {
     total_weight_bytes: usize,
     tensors: Vec<TensorDescriptor>,
     dory: Option<DoryMetadata>,
+    kv_lora_rank: Option<usize>,
+    qk_rope_head_dim: Option<usize>,
+    q_lora_rank: Option<usize>,
+    qk_nope_head_dim: Option<usize>,
+    v_head_dim: Option<usize>,
+    expert_count: Option<usize>,
+    expert_used_count: Option<usize>,
+    expert_shared_count: Option<usize>,
 }
 
 impl ModelMetadata {
@@ -1009,6 +1017,76 @@ impl ModelMetadata {
     #[must_use]
     pub fn dory(&self) -> Option<&DoryMetadata> {
         self.dory.as_ref()
+    }
+
+    /// Returns the `MLA` KV latent `LoRA` rank (`{arch}.attention.kv_lora_rank`), if present.
+    #[must_use]
+    pub const fn kv_lora_rank(&self) -> Option<usize> {
+        self.kv_lora_rank
+    }
+
+    /// Returns the decoupled `MLA` `RoPE` key head dimension, if present.
+    #[must_use]
+    pub const fn qk_rope_head_dim(&self) -> Option<usize> {
+        self.qk_rope_head_dim
+    }
+
+    /// Returns the `MLA` query `LoRA` rank (`{arch}.attention.q_lora_rank`), if present.
+    #[must_use]
+    pub const fn q_lora_rank(&self) -> Option<usize> {
+        self.q_lora_rank
+    }
+
+    /// Returns the non-rotary per-head key dimension (`{arch}.attention.key_length`), if present.
+    #[must_use]
+    pub const fn qk_nope_head_dim(&self) -> Option<usize> {
+        self.qk_nope_head_dim
+    }
+
+    /// Returns the per-head value dimension (`{arch}.attention.value_length`), if present.
+    #[must_use]
+    pub const fn v_head_dim(&self) -> Option<usize> {
+        self.v_head_dim
+    }
+
+    /// Returns the routed `MoE` expert count (`{arch}.expert_count`), if present.
+    #[must_use]
+    pub const fn expert_count(&self) -> Option<usize> {
+        self.expert_count
+    }
+
+    /// Returns the active routed `MoE` experts per token (`{arch}.expert_used_count`), if present.
+    #[must_use]
+    pub const fn expert_used_count(&self) -> Option<usize> {
+        self.expert_used_count
+    }
+
+    /// Returns the shared `MoE` expert count (`{arch}.expert_shared_count`), if present.
+    #[must_use]
+    pub const fn expert_shared_count(&self) -> Option<usize> {
+        self.expert_shared_count
+    }
+
+    /// Overrides the `MLA` compressed KV latent dimensions on this [`ModelMetadata`].
+    #[must_use]
+    pub const fn with_mla_dims(mut self, kv_lora_rank: usize, qk_rope_head_dim: usize) -> Self {
+        self.kv_lora_rank = Some(kv_lora_rank);
+        self.qk_rope_head_dim = Some(qk_rope_head_dim);
+        self
+    }
+
+    /// Returns `true` when `output.weight` is omitted or shares the exact offset of `token_embd.weight`.
+    #[must_use]
+    pub fn has_tied_embeddings(&self) -> bool {
+        let Some(embd) = self.find_tensor("token_embd.weight") else {
+            return false;
+        };
+        match self.find_tensor("output.weight") {
+            None => true,
+            Some(out) => {
+                out.absolute_offset() == embd.absolute_offset() && out.byte_len() == embd.byte_len()
+            }
+        }
     }
 }
 
@@ -1161,6 +1239,51 @@ impl<'a> GgufFile<'a> {
         let parsed_tensors =
             Self::build_tensor_descriptors(raw_tensors, tensor_data_offset, buffer.len())?;
 
+        let lookup_usize = |suffix: &str| -> Option<usize> {
+            let key = format!("{architecture}.{suffix}");
+            metadata_map
+                .get(key.as_str())
+                .and_then(GgufValue::as_usize)
+                .filter(|&v| v > 0)
+        };
+
+        let mut kv_lora_rank = lookup_usize("attention.kv_lora_rank");
+        let mut qk_rope_head_dim = lookup_usize("attention.key_length_mla").or_else(|| {
+            if architecture == "deepseek2" {
+                lookup_usize("rope.dimension_count")
+            } else {
+                None
+            }
+        });
+        if kv_lora_rank.is_none()
+            && let Some(norm_desc) = parsed_tensors
+                .descriptors
+                .iter()
+                .find(|t| t.name == "blk.0.attn_kv_a_norm.weight")
+            && norm_desc.shape.len() == 1
+            && norm_desc.shape[0] > 0
+        {
+            kv_lora_rank = Some(norm_desc.shape[0]);
+        }
+        if qk_rope_head_dim.is_none()
+            && let Some(rank) = kv_lora_rank
+            && let Some(mqa_desc) = parsed_tensors
+                .descriptors
+                .iter()
+                .find(|t| t.name == "blk.0.attn_kv_a_mqa.weight")
+            && mqa_desc.shape.len() == 2
+            && mqa_desc.shape[1] > rank
+        {
+            qk_rope_head_dim = Some(mqa_desc.shape[1] - rank);
+        }
+
+        let q_lora_rank = lookup_usize("attention.q_lora_rank");
+        let key_head_dim = lookup_usize("attention.key_length");
+        let v_head_dim = lookup_usize("attention.value_length");
+        let expert_count = lookup_usize("expert_count");
+        let expert_used_count = lookup_usize("expert_used_count");
+        let expert_shared_count = lookup_usize("expert_shared_count");
+
         let metadata = ModelMetadata {
             architecture,
             layer_count,
@@ -1173,6 +1296,14 @@ impl<'a> GgufFile<'a> {
             total_weight_bytes: parsed_tensors.total_weight_bytes,
             tensors: parsed_tensors.descriptors,
             dory,
+            kv_lora_rank,
+            qk_rope_head_dim,
+            q_lora_rank,
+            qk_nope_head_dim: key_head_dim,
+            v_head_dim,
+            expert_count,
+            expert_used_count,
+            expert_shared_count,
         };
 
         Ok(Self {
@@ -1460,6 +1591,7 @@ impl<'a> GgufFile<'a> {
         buffer_len: usize,
     ) -> Result<ParsedTensors, K3Error> {
         let mut total_weight_bytes: usize = 0;
+        let mut seen_spans = BTreeSet::new();
         let mut descriptors = Vec::with_capacity(raw_tensors.len());
         let mut tensor_index = BTreeMap::new();
 
@@ -1496,15 +1628,18 @@ impl<'a> GgufFile<'a> {
                 });
             }
 
-            total_weight_bytes = total_weight_bytes
-                .checked_add(raw.byte_len)
-                .ok_or_else(|| K3Error::TensorBoundsError {
-                    tensor_name: raw.name.clone(),
-                    offset: absolute_offset,
-                    byte_len: raw.byte_len,
-                    buffer_len,
-                    reason: "total weight bytes overflowed usize".to_owned(),
-                })?;
+            if seen_spans.insert((absolute_offset, raw.byte_len)) {
+                total_weight_bytes =
+                    total_weight_bytes
+                        .checked_add(raw.byte_len)
+                        .ok_or_else(|| K3Error::TensorBoundsError {
+                            tensor_name: raw.name.clone(),
+                            offset: absolute_offset,
+                            byte_len: raw.byte_len,
+                            buffer_len,
+                            reason: "total weight bytes overflowed usize".to_owned(),
+                        })?;
+            }
 
             tensor_index.insert(raw.name.clone(), idx);
 
@@ -2229,5 +2364,45 @@ mod tests {
         let gguf = GgufFile::parse(&bytes).expect("parse synthetic gguf");
         assert!(gguf.metadata().dory().is_none());
         assert!(gguf.dory().is_none());
+    }
+
+    #[test]
+    fn test_model_metadata_mla_moe_and_tied_embeddings() {
+        // 1. Explicit DeepSeek2 MLA + MoE metadata extraction
+        let extra_kvs = [
+            ("deepseek2.block_count", GgufValue::Uint32(27)),
+            ("deepseek2.attention.kv_lora_rank", GgufValue::Uint32(512)),
+            ("deepseek2.attention.q_lora_rank", GgufValue::Uint32(1536)),
+            ("deepseek2.attention.key_length", GgufValue::Uint32(128)),
+            ("deepseek2.attention.value_length", GgufValue::Uint32(128)),
+            ("deepseek2.rope.dimension_count", GgufValue::Uint32(64)),
+            ("deepseek2.expert_count", GgufValue::Uint32(64)),
+            ("deepseek2.expert_used_count", GgufValue::Uint32(6)),
+            ("deepseek2.expert_shared_count", GgufValue::Uint32(2)),
+        ];
+        let tensor_specs = [("token_embd.weight", QuantType::Q8_0, &[32, 16][..])];
+        let bytes = create_synthetic_gguf_v3_with_kvs("deepseek2", 32, &extra_kvs, &tensor_specs);
+        let gguf = GgufFile::parse(&bytes).expect("parse deepseek2 gguf");
+        let meta = gguf.metadata();
+        assert_eq!(meta.kv_lora_rank(), Some(512));
+        assert_eq!(meta.qk_rope_head_dim(), Some(64));
+        assert_eq!(meta.q_lora_rank(), Some(1536));
+        assert_eq!(meta.qk_nope_head_dim(), Some(128));
+        assert_eq!(meta.v_head_dim(), Some(128));
+        assert_eq!(meta.expert_count(), Some(64));
+        assert_eq!(meta.expert_used_count(), Some(6));
+        assert_eq!(meta.expert_shared_count(), Some(2));
+        assert!(meta.has_tied_embeddings());
+
+        // 2. Fallback inference of kv_lora_rank and qk_rope_head_dim from tensor shapes
+        let fallback_specs = [
+            ("blk.0.attn_kv_a_norm.weight", QuantType::F32, &[16][..]),
+            ("blk.0.attn_kv_a_mqa.weight", QuantType::F32, &[32, 24][..]),
+        ];
+        let fb_bytes = create_synthetic_gguf_v3("deepseek2", 32, &fallback_specs);
+        let fb_gguf = GgufFile::parse(&fb_bytes).expect("parse fallback deepseek2");
+        assert_eq!(fb_gguf.metadata().kv_lora_rank(), Some(16));
+        assert_eq!(fb_gguf.metadata().qk_rope_head_dim(), Some(8));
+        assert!(!fb_gguf.metadata().has_tied_embeddings());
     }
 }
