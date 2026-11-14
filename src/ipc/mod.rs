@@ -12,9 +12,9 @@ pub use arrow::{
 };
 pub use layout::{
     ARENA_MAGIC, ARENA_MAGIC_BYTES, ARENA_VERSION, ArenaHeader, BLOCK_SIZE_TOKENS,
-    CACHELINE_ALIGNMENT, KvBlockMeta, KvBlockTag, OutputSlabHeader, SLAB_STATUS_IDLE,
-    SLAB_STATUS_READ, SLAB_STATUS_WRITTEN, TAG_FREE, TAG_PERSIST, TAG_PURGE, TAG_VOLATILE,
-    TokenInputSlotHeader,
+    CACHELINE_ALIGNMENT, KvBlockMeta, KvBlockTag, OutputSlabHeader, RecurrentStateSlotHeader,
+    SLAB_STATUS_IDLE, SLAB_STATUS_READ, SLAB_STATUS_WRITTEN, TAG_FREE, TAG_PERSIST, TAG_PURGE,
+    TAG_VOLATILE, TokenInputSlotHeader,
 };
 pub use protocol::{
     AllocateArenaRequest, AllocateArenaResponse, AttachArenaCommand, DeallocateArenaRequest,

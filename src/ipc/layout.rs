@@ -348,6 +348,95 @@ impl Default for OutputSlabHeader {
     }
 }
 
+/// 64-byte aligned header preceding the ping-pong recurrent state arena region.
+///
+/// Followed immediately at byte offset `64` by two identically sized banks
+/// (`bank 0` and `bank 1`), each spanning `bank_stride_bytes` bytes for crash-safe
+/// alternating step commits (`O(1)` memory footprint for SSM, RWKV, and LFM2 shortconv layers).
+#[repr(C, align(64))]
+#[allow(clippy::pub_underscore_fields)]
+#[derive(
+    Default, Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, KnownLayout, Immutable,
+)]
+pub struct RecurrentStateSlotHeader {
+    /// Sequence step index last durably committed to `active_bank`.
+    pub committed_step: u32,
+    /// Active ping-pong state bank index (`0` or `1`).
+    pub active_bank: u32,
+    /// Number of recurrent/SSM layers stored inside each bank.
+    pub num_recurrent_layers: u32,
+    /// Per-layer convolution history byte stride within each bank.
+    pub conv_state_bytes_per_layer: u32,
+    /// Per-layer recurrent SSM/WKV state byte stride within each bank.
+    pub ssm_state_bytes_per_layer: u32,
+    /// Explicit alignment padding before [`Self::bank_stride_bytes`].
+    pub _pad0: u32,
+    /// Total byte stride of a single recurrent state bank.
+    pub bank_stride_bytes: u64,
+    /// Reserved trailing bytes completing the 64-byte header.
+    pub _reserved: [u8; 32],
+}
+
+impl RecurrentStateSlotHeader {
+    /// Constructs a new [`RecurrentStateSlotHeader`] positioned at step `0` with `active_bank = 0`.
+    #[must_use]
+    pub const fn new(
+        num_recurrent_layers: u32,
+        conv_state_bytes_per_layer: u32,
+        ssm_state_bytes_per_layer: u32,
+        bank_stride_bytes: u64,
+    ) -> Self {
+        Self {
+            committed_step: 0,
+            active_bank: 0,
+            num_recurrent_layers,
+            conv_state_bytes_per_layer,
+            ssm_state_bytes_per_layer,
+            _pad0: 0,
+            bank_stride_bytes,
+            _reserved: [0; 32],
+        }
+    }
+
+    /// Returns the currently inactive staging bank index (`1` when `active_bank == 0`, else `0`).
+    #[must_use]
+    pub const fn inactive_bank(&self) -> u32 {
+        if self.active_bank == 0 { 1 } else { 0 }
+    }
+
+    /// Returns the byte offset of `bank` relative to the start of the recurrent state region.
+    #[must_use]
+    pub const fn bank_offset_bytes(&self, bank: u32) -> u64 {
+        (size_of::<Self>() as u64) + (bank as u64) * self.bank_stride_bytes
+    }
+
+    /// Returns the total byte span required for the header plus both ping-pong banks.
+    #[must_use]
+    pub const fn total_region_bytes(&self) -> u64 {
+        (size_of::<Self>() as u64) + 2 * self.bank_stride_bytes
+    }
+
+    /// Validates structural invariants of this recurrent state header.
+    ///
+    /// # Errors
+    /// Returns a static diagnostic message if `active_bank > 1` or `bank_stride_bytes`
+    /// is smaller than the aggregate per-layer state requirements.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.active_bank > 1 {
+            return Err("RecurrentStateSlotHeader active_bank must be 0 or 1");
+        }
+        let per_layer = u64::from(self.conv_state_bytes_per_layer)
+            .saturating_add(u64::from(self.ssm_state_bytes_per_layer));
+        let min_bank_stride = u64::from(self.num_recurrent_layers).saturating_mul(per_layer);
+        if self.bank_stride_bytes < min_bank_stride {
+            return Err(
+                "RecurrentStateSlotHeader bank_stride_bytes smaller than layer requirements",
+            );
+        }
+        Ok(())
+    }
+}
+
 // Compile-time layout invariants verification
 const _: () = {
     assert!(size_of::<ArenaHeader>() == 128);
@@ -361,6 +450,9 @@ const _: () = {
 
     assert!(size_of::<OutputSlabHeader>() == 64);
     assert!(align_of::<OutputSlabHeader>() == 64);
+
+    assert!(size_of::<RecurrentStateSlotHeader>() == 64);
+    assert!(align_of::<RecurrentStateSlotHeader>() == 64);
 };
 
 #[cfg(test)]
@@ -529,5 +621,54 @@ mod tests {
         assert_eq!(recovered.version, ARENA_VERSION);
         assert_eq!(recovered._reserved.len(), 24);
         assert_eq!(recovered, hdr);
+    }
+
+    #[test]
+    fn test_recurrent_state_slot_header_zerocopy() {
+        let header = RecurrentStateSlotHeader {
+            committed_step: 42,
+            active_bank: 1,
+            num_recurrent_layers: 12,
+            conv_state_bytes_per_layer: 1536,
+            ssm_state_bytes_per_layer: 32768,
+            _pad0: 0,
+            bank_stride_bytes: 12 * (1536 + 32768),
+            _reserved: [0; 32],
+        };
+        assert!(header.validate().is_ok());
+        assert_eq!(header.inactive_bank(), 0);
+        assert_eq!(header.bank_offset_bytes(0), 64);
+        assert_eq!(header.bank_offset_bytes(1), 64 + 12 * (1536 + 32768));
+        assert_eq!(header.total_region_bytes(), 64 + 2 * 12 * (1536 + 32768));
+
+        let bytes = header.as_bytes();
+        assert_eq!(bytes.len(), 64);
+        let recovered =
+            RecurrentStateSlotHeader::read_from_bytes(bytes).expect("zerocopy roundtrip");
+        assert_eq!(recovered, header);
+
+        let mut bad_bank = header;
+        bad_bank.active_bank = 2;
+        assert!(bad_bank.validate().is_err());
+
+        let mut undersized_stride = header;
+        undersized_stride.bank_stride_bytes -= 64;
+        assert!(undersized_stride.validate().is_err());
+    }
+
+    #[test]
+    fn test_recurrent_state_slot_header_layout() {
+        assert_eq!(size_of::<RecurrentStateSlotHeader>(), 64);
+        assert_eq!(align_of::<RecurrentStateSlotHeader>(), 64);
+
+        let default_hdr = RecurrentStateSlotHeader::default();
+        assert_eq!(default_hdr.committed_step, 0);
+        assert_eq!(default_hdr.active_bank, 0);
+        assert_eq!(default_hdr.inactive_bank(), 1);
+        assert!(default_hdr.validate().is_ok());
+
+        let constructed = RecurrentStateSlotHeader::new(4, 256, 4096, 4 * (256 + 4096));
+        assert!(constructed.validate().is_ok());
+        assert_eq!(constructed.as_bytes().len(), CACHELINE_ALIGNMENT);
     }
 }

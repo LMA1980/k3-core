@@ -156,6 +156,25 @@ impl<'a> GgufValue<'a> {
         }
     }
 
+    /// Returns the value as a vector of `usize` if it is an integer array with non-negative values.
+    #[must_use]
+    pub fn as_usize_array(&self) -> Option<Vec<usize>> {
+        let Self::Array(arr) = self else {
+            return None;
+        };
+        match arr {
+            GgufArray::Uint8(items) => Some(items.iter().map(|&v| usize::from(v)).collect()),
+            GgufArray::Uint16(items) => Some(items.iter().map(|&v| usize::from(v)).collect()),
+            GgufArray::Uint32(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            GgufArray::Uint64(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            GgufArray::Int8(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            GgufArray::Int16(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            GgufArray::Int32(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            GgufArray::Int64(items) => items.iter().map(|&v| usize::try_from(v).ok()).collect(),
+            _ => None,
+        }
+    }
+
     /// Returns the value as `u32` if convertible.
     #[must_use]
     pub fn as_u32(&self) -> Option<u32> {
@@ -944,6 +963,19 @@ pub struct ModelMetadata {
     expert_count: Option<usize>,
     expert_used_count: Option<usize>,
     expert_shared_count: Option<usize>,
+    expert_feed_forward_length: Option<usize>,
+    head_count_kv_per_layer: Vec<usize>,
+    ssm_conv_kernel: Option<usize>,
+    ssm_inner_size: Option<usize>,
+    ssm_state_size: Option<usize>,
+    ssm_time_step_rank: Option<usize>,
+    ssm_group_count: Option<usize>,
+    shortconv_l_cache: Option<usize>,
+    wkv_head_size: Option<usize>,
+    embedding_scale: Option<f32>,
+    residual_scale: Option<f32>,
+    attention_scale: Option<f32>,
+    logit_scale: Option<f32>,
 }
 
 impl ModelMetadata {
@@ -1067,11 +1099,144 @@ impl ModelMetadata {
         self.expert_shared_count
     }
 
+    /// Returns the routed `MoE` expert feed-forward intermediate dimension (`{arch}.expert_feed_forward_length`), if present.
+    #[must_use]
+    pub const fn expert_feed_forward_length(&self) -> Option<usize> {
+        self.expert_feed_forward_length
+    }
+
+    /// Returns per-layer key/value head counts (`{arch}.attention.head_count_kv` when encoded as an array).
+    #[must_use]
+    pub fn head_count_kv_per_layer(&self) -> &[usize] {
+        &self.head_count_kv_per_layer
+    }
+
+    /// Returns the `SSM` depthwise convolution kernel width (`{arch}.ssm.conv_kernel`), if present.
+    #[must_use]
+    pub const fn ssm_conv_kernel(&self) -> Option<usize> {
+        self.ssm_conv_kernel
+    }
+
+    /// Returns the `SSM` inner projection width (`{arch}.ssm.inner_size`), if present.
+    #[must_use]
+    pub const fn ssm_inner_size(&self) -> Option<usize> {
+        self.ssm_inner_size
+    }
+
+    /// Returns the `SSM` state dimension (`{arch}.ssm.state_size`), if present.
+    #[must_use]
+    pub const fn ssm_state_size(&self) -> Option<usize> {
+        self.ssm_state_size
+    }
+
+    /// Returns the `SSM` time-step rank or head count (`{arch}.ssm.time_step_rank`), if present.
+    #[must_use]
+    pub const fn ssm_time_step_rank(&self) -> Option<usize> {
+        self.ssm_time_step_rank
+    }
+
+    /// Returns the `SSM` group count (`{arch}.ssm.group_count`), if present.
+    #[must_use]
+    pub const fn ssm_group_count(&self) -> Option<usize> {
+        self.ssm_group_count
+    }
+
+    /// Returns the `LFM2` short-convolution cache length (`{arch}.shortconv.l_cache`), if present.
+    #[must_use]
+    pub const fn shortconv_l_cache(&self) -> Option<usize> {
+        self.shortconv_l_cache
+    }
+
+    /// Returns the `RWKV` WKV head dimension (`{arch}.wkv.head_size`), if present.
+    #[must_use]
+    pub const fn wkv_head_size(&self) -> Option<usize> {
+        self.wkv_head_size
+    }
+
+    /// Returns the Granite-style embedding multiplier (`{arch}.embedding_scale`), if present.
+    #[must_use]
+    pub const fn embedding_scale(&self) -> Option<f32> {
+        self.embedding_scale
+    }
+
+    /// Returns the Granite-style residual branch multiplier (`{arch}.residual_scale`), if present.
+    #[must_use]
+    pub const fn residual_scale(&self) -> Option<f32> {
+        self.residual_scale
+    }
+
+    /// Returns the Granite-style attention scaling multiplier (`{arch}.attention.scale`), if present.
+    #[must_use]
+    pub const fn attention_scale(&self) -> Option<f32> {
+        self.attention_scale
+    }
+
+    /// Returns the Granite-style final logit multiplier (`{arch}.logit_scale`), if present.
+    #[must_use]
+    pub const fn logit_scale(&self) -> Option<f32> {
+        self.logit_scale
+    }
+
     /// Overrides the `MLA` compressed KV latent dimensions on this [`ModelMetadata`].
     #[must_use]
     pub const fn with_mla_dims(mut self, kv_lora_rank: usize, qk_rope_head_dim: usize) -> Self {
         self.kv_lora_rank = Some(kv_lora_rank);
         self.qk_rope_head_dim = Some(qk_rope_head_dim);
+        self
+    }
+
+    /// Overrides `SSM` hyperparameters on this [`ModelMetadata`].
+    #[must_use]
+    pub const fn with_ssm_dims(
+        mut self,
+        conv_kernel: usize,
+        inner_size: usize,
+        state_size: usize,
+        time_step_rank: usize,
+        group_count: usize,
+    ) -> Self {
+        self.ssm_conv_kernel = Some(conv_kernel);
+        self.ssm_inner_size = Some(inner_size);
+        self.ssm_state_size = Some(state_size);
+        self.ssm_time_step_rank = Some(time_step_rank);
+        self.ssm_group_count = Some(group_count);
+        self
+    }
+
+    /// Overrides the `LFM2` short-convolution cache length on this [`ModelMetadata`].
+    #[must_use]
+    pub const fn with_shortconv_l_cache(mut self, l_cache: usize) -> Self {
+        self.shortconv_l_cache = Some(l_cache);
+        self
+    }
+
+    /// Overrides the `RWKV` WKV head dimension on this [`ModelMetadata`].
+    #[must_use]
+    pub const fn with_wkv_head_size(mut self, head_size: usize) -> Self {
+        self.wkv_head_size = Some(head_size);
+        self
+    }
+
+    /// Overrides Granite scaling multipliers on this [`ModelMetadata`].
+    #[must_use]
+    pub const fn with_granite_scales(
+        mut self,
+        embedding_scale: Option<f32>,
+        residual_scale: Option<f32>,
+        attention_scale: Option<f32>,
+        logit_scale: Option<f32>,
+    ) -> Self {
+        self.embedding_scale = embedding_scale;
+        self.residual_scale = residual_scale;
+        self.attention_scale = attention_scale;
+        self.logit_scale = logit_scale;
+        self
+    }
+
+    /// Overrides per-layer KV head counts on this [`ModelMetadata`].
+    #[must_use]
+    pub fn with_head_count_kv_per_layer(mut self, per_layer: Vec<usize>) -> Self {
+        self.head_count_kv_per_layer = per_layer;
         self
     }
 
@@ -1208,9 +1373,13 @@ impl<'a> GgufFile<'a> {
             .unwrap_or(0);
 
         let head_count_kv_key = format!("{architecture}.attention.head_count_kv");
-        let head_count_kv = metadata_map
-            .get(head_count_kv_key.as_str())
+        let head_count_kv_val = metadata_map.get(head_count_kv_key.as_str());
+        let head_count_kv_per_layer = head_count_kv_val
+            .and_then(GgufValue::as_usize_array)
+            .unwrap_or_default();
+        let head_count_kv = head_count_kv_val
             .and_then(GgufValue::as_usize)
+            .or_else(|| head_count_kv_per_layer.iter().copied().max())
             .unwrap_or(head_count);
 
         let ctx_len_key = format!("{architecture}.context_length");
@@ -1283,6 +1452,27 @@ impl<'a> GgufFile<'a> {
         let expert_count = lookup_usize("expert_count");
         let expert_used_count = lookup_usize("expert_used_count");
         let expert_shared_count = lookup_usize("expert_shared_count");
+        let expert_feed_forward_length = lookup_usize("expert_feed_forward_length");
+
+        let lookup_f32 = |suffix: &str| -> Option<f32> {
+            let key = format!("{architecture}.{suffix}");
+            metadata_map
+                .get(key.as_str())
+                .and_then(GgufValue::as_f32)
+                .filter(|v| v.is_finite() && *v > 0.0)
+        };
+
+        let ssm_conv_kernel = lookup_usize("ssm.conv_kernel");
+        let ssm_inner_size = lookup_usize("ssm.inner_size");
+        let ssm_state_size = lookup_usize("ssm.state_size");
+        let ssm_time_step_rank = lookup_usize("ssm.time_step_rank");
+        let ssm_group_count = lookup_usize("ssm.group_count");
+        let shortconv_l_cache = lookup_usize("shortconv.l_cache");
+        let wkv_head_size = lookup_usize("wkv.head_size");
+        let embedding_scale = lookup_f32("embedding_scale");
+        let residual_scale = lookup_f32("residual_scale");
+        let attention_scale = lookup_f32("attention.scale");
+        let logit_scale = lookup_f32("logit_scale");
 
         let metadata = ModelMetadata {
             architecture,
@@ -1304,6 +1494,19 @@ impl<'a> GgufFile<'a> {
             expert_count,
             expert_used_count,
             expert_shared_count,
+            expert_feed_forward_length,
+            head_count_kv_per_layer,
+            ssm_conv_kernel,
+            ssm_inner_size,
+            ssm_state_size,
+            ssm_time_step_rank,
+            ssm_group_count,
+            shortconv_l_cache,
+            wkv_head_size,
+            embedding_scale,
+            residual_scale,
+            attention_scale,
+            logit_scale,
         };
 
         Ok(Self {
@@ -2404,5 +2607,103 @@ mod tests {
         assert_eq!(fb_gguf.metadata().kv_lora_rank(), Some(16));
         assert_eq!(fb_gguf.metadata().qk_rope_head_dim(), Some(8));
         assert!(!fb_gguf.metadata().has_tied_embeddings());
+    }
+
+    #[test]
+    fn test_gguf_ssm_rwkv_lfm2_granite_metadata_parsing() {
+        // 1. Mamba2 pure SSM metadata (zero attention heads)
+        let mamba2_kvs = [
+            ("mamba2.block_count", GgufValue::Uint32(48)),
+            ("mamba2.embedding_length", GgufValue::Uint32(2560)),
+            ("mamba2.attention.head_count", GgufValue::Uint32(0)),
+            ("mamba2.attention.head_count_kv", GgufValue::Uint32(0)),
+            ("mamba2.ssm.conv_kernel", GgufValue::Uint32(4)),
+            ("mamba2.ssm.inner_size", GgufValue::Uint32(5120)),
+            ("mamba2.ssm.state_size", GgufValue::Uint32(128)),
+            ("mamba2.ssm.time_step_rank", GgufValue::Uint32(80)),
+            ("mamba2.ssm.group_count", GgufValue::Uint32(1)),
+        ];
+        let mamba2_bytes = create_synthetic_gguf_v3_with_kvs("mamba2", 16, &mamba2_kvs, &[]);
+        let mamba2_gguf = GgufFile::parse(&mamba2_bytes).expect("parse mamba2 gguf");
+        let m2 = mamba2_gguf.metadata();
+        assert_eq!(m2.head_count_kv(), 0);
+        assert_eq!(m2.ssm_conv_kernel(), Some(4));
+        assert_eq!(m2.ssm_inner_size(), Some(5120));
+        assert_eq!(m2.ssm_state_size(), Some(128));
+        assert_eq!(m2.ssm_time_step_rank(), Some(80));
+        assert_eq!(m2.ssm_group_count(), Some(1));
+
+        // 2. RWKV7 WKV head size
+        let rwkv7_kvs = [
+            ("rwkv7.block_count", GgufValue::Uint32(24)),
+            ("rwkv7.embedding_length", GgufValue::Uint32(2048)),
+            ("rwkv7.wkv.head_size", GgufValue::Uint32(64)),
+        ];
+        let rwkv7_bytes = create_synthetic_gguf_v3_with_kvs("rwkv7", 16, &rwkv7_kvs, &[]);
+        let rwkv7_gguf = GgufFile::parse(&rwkv7_bytes).expect("parse rwkv7 gguf");
+        assert_eq!(rwkv7_gguf.metadata().wkv_head_size(), Some(64));
+
+        // 3. LFM2 MoE with per-layer head_count_kv array and shortconv l_cache
+        let lfm2_kvs = [
+            ("lfm2moe.block_count", GgufValue::Uint32(6)),
+            ("lfm2moe.embedding_length", GgufValue::Uint32(2048)),
+            ("lfm2moe.attention.head_count", GgufValue::Uint32(32)),
+            (
+                "lfm2moe.attention.head_count_kv",
+                GgufValue::Array(GgufArray::Uint32(vec![0, 0, 8, 0, 0, 8])),
+            ),
+            ("lfm2moe.shortconv.l_cache", GgufValue::Uint32(3)),
+            ("lfm2moe.expert_count", GgufValue::Uint32(32)),
+            ("lfm2moe.expert_used_count", GgufValue::Uint32(4)),
+            (
+                "lfm2moe.expert_feed_forward_length",
+                GgufValue::Uint32(1792),
+            ),
+        ];
+        let lfm2_bytes = create_synthetic_gguf_v3_with_kvs("lfm2moe", 16, &lfm2_kvs, &[]);
+        let lfm2_gguf = GgufFile::parse(&lfm2_bytes).expect("parse lfm2moe gguf");
+        let l2 = lfm2_gguf.metadata();
+        assert_eq!(l2.head_count_kv(), 8);
+        assert_eq!(l2.head_count_kv_per_layer(), &[0, 0, 8, 0, 0, 8]);
+        assert_eq!(l2.shortconv_l_cache(), Some(3));
+        assert_eq!(l2.expert_count(), Some(32));
+        assert_eq!(l2.expert_used_count(), Some(4));
+        assert_eq!(l2.expert_feed_forward_length(), Some(1792));
+
+        // 4. Granite multipliers + Granite Hybrid SSM fields
+        let granite_kvs = [
+            ("granitehybrid.block_count", GgufValue::Uint32(40)),
+            ("granitehybrid.embedding_length", GgufValue::Uint32(3072)),
+            ("granitehybrid.attention.head_count", GgufValue::Uint32(24)),
+            (
+                "granitehybrid.attention.head_count_kv",
+                GgufValue::Uint32(8),
+            ),
+            ("granitehybrid.ssm.conv_kernel", GgufValue::Uint32(4)),
+            ("granitehybrid.ssm.inner_size", GgufValue::Uint32(6144)),
+            ("granitehybrid.ssm.state_size", GgufValue::Uint32(128)),
+            ("granitehybrid.ssm.time_step_rank", GgufValue::Uint32(48)),
+            ("granitehybrid.ssm.group_count", GgufValue::Uint32(1)),
+            ("granitehybrid.embedding_scale", GgufValue::Float32(12.0)),
+            ("granitehybrid.residual_scale", GgufValue::Float32(0.22)),
+            (
+                "granitehybrid.attention.scale",
+                GgufValue::Float32(0.007_812_5),
+            ),
+            ("granitehybrid.logit_scale", GgufValue::Float32(16.0)),
+        ];
+        let granite_bytes =
+            create_synthetic_gguf_v3_with_kvs("granitehybrid", 16, &granite_kvs, &[]);
+        let granite_gguf = GgufFile::parse(&granite_bytes).expect("parse granitehybrid gguf");
+        let g = granite_gguf.metadata();
+        assert_eq!(g.embedding_scale(), Some(12.0));
+        assert_eq!(g.residual_scale(), Some(0.22));
+        assert_eq!(g.attention_scale(), Some(0.007_812_5));
+        assert_eq!(g.logit_scale(), Some(16.0));
+        assert_eq!(g.ssm_conv_kernel(), Some(4));
+        assert_eq!(g.ssm_inner_size(), Some(6144));
+        assert_eq!(g.ssm_state_size(), Some(128));
+        assert_eq!(g.ssm_time_step_rank(), Some(48));
+        assert_eq!(g.ssm_group_count(), Some(1));
     }
 }

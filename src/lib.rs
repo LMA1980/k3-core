@@ -29,7 +29,8 @@ pub use gguf::{
 };
 pub use ipc::{
     ArenaHeader, ArenaOptions, ArenaSocketExt, IpcError, IpcMessage, KvBlockMeta, KvBlockTag,
-    OutputSlabHeader, SharedMemoryArena, StatusCode, TokenInputSlotHeader,
+    OutputSlabHeader, RecurrentStateSlotHeader, SharedMemoryArena, StatusCode,
+    TokenInputSlotHeader,
 };
 pub use manifest::ModelManifest;
 pub use profile::{
